@@ -15,12 +15,18 @@ public static class DamageCalculator
             (attacker.WeaponDamage * attack.WeaponDamageMultiplier);
     }
 
-    // Applies the game's midpoint-to-even integer rounding to one contact's damage.
+    // Applies physical Armor with game-accurate float math before midpoint-to-even rounding.
     public static double CalculateDamage(
         CharacterStats attacker,
         AttackStep attack,
-        CombatConfig config)
+        CombatConfig config,
+        double targetArmor = 0)
     {
-        return Math.Round(CalculateRawDamage(attacker, attack, config));
+        float armorFactor = (float)config.PhysicalArmorConstant;
+        float armor = (float)targetArmor;
+        float armorReduction = 1f -
+            (armorFactor * armor / (1f + (armorFactor * Math.Abs(armor))));
+        float baseDamage = (float)CalculateRawDamage(attacker, attack, config);
+        return (int)Math.Round(baseDamage * armorReduction);
     }
 }

@@ -41,6 +41,9 @@ public static class RegressionSuite
 
         AssertClose(125, DamageCalculator.CalculateRawDamage(stats, step, DefaultConfig()));
         AssertClose(125, DamageCalculator.CalculateDamage(stats, step, DefaultConfig()));
+        AssertClose(83, DamageCalculator.CalculateDamage(stats, step, DefaultConfig(), 100));
+        AssertClose(167, DamageCalculator.CalculateDamage(stats, step, DefaultConfig(), -100));
+        AssertClose(0, DamageCalculator.CalculateDamage(stats, step, DefaultConfig(), 1_000_000_000));
     }
 
     // Confirms full loadouts obey two-handed rules and never select excluded bows.
@@ -212,14 +215,15 @@ public static class RegressionSuite
         WeaponAttackProfile profile = CreateProfile();
         Loadout loadout = NewLoadout(
             "Test Weapon",
-            BuildStats(attackPower: 10, health: 1000, weaponDamage: 100),
+            BuildStats(attackPower: 10, health: 1000, weaponDamage: 100, armor: 100),
             profile);
-        (double health, double weaponDamage, double attackSpeed) =
+        (double health, double weaponDamage, double attackSpeed, double armor) =
             TimeBasedAnalysisRunner.CalculateWeights(loadout, DefaultConfig());
 
         AssertClose(2, weaponDamage);
         AssertClose(0.21, health);
         AssertClose(2.1, attackSpeed);
+        AssertClose(0.7, armor);
     }
 
     // Confirms identical seeds produce identical distributions and timing statistics.
@@ -317,12 +321,17 @@ public static class RegressionSuite
     }
 
     // Creates immutable stats with the attributes needed by combat fixtures.
-    private static CharacterStats BuildStats(double attackPower, double health, double weaponDamage)
+    private static CharacterStats BuildStats(
+        double attackPower,
+        double health,
+        double weaponDamage,
+        double armor = 0)
     {
         CharacterStatsBuilder builder = new();
         builder.Set(AttributeId.AttackPower, attackPower);
         builder.Set(AttributeId.MaxHealth, health);
         builder.Set(AttributeId.WeaponDamage, weaponDamage);
+        builder.Set(AttributeId.Armor, armor);
         return builder.Build();
     }
 
@@ -388,7 +397,8 @@ public static class RegressionSuite
     // Supplies the current AP scaling rule to regression fixtures.
     private static CombatConfig DefaultConfig() => new()
     {
-        AttackPowerMultiplier = 0.5
+        AttackPowerMultiplier = 0.5,
+        PhysicalArmorConstant = 0.005
     };
 
     // Runs one named check and prints a compact success line.

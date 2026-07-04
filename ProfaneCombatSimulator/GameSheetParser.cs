@@ -17,10 +17,12 @@ public static partial class GameSheetParser
         startingStats.Set(AttributeId.AttackPower, FindMinimum(caps, AttributeId.AttackPower));
         startingStats.Set(AttributeId.MaxHealth, FindMinimum(caps, AttributeId.MaxHealth));
         startingStats.Set(AttributeId.WeaponDamage, FindMinimum(caps, AttributeId.WeaponDamage));
+        startingStats.Set(AttributeId.Armor, FindMinimum(caps, AttributeId.Armor));
 
         CombatConfig config = new()
         {
-            AttackPowerMultiplier = FindSetting(combat, "AttackPowerMultiplier")
+            AttackPowerMultiplier = FindSetting(combat, "AttackPowerMultiplier"),
+            PhysicalArmorConstant = FindSetting(combat, "Physical Armor Constant")
         };
 
         IReadOnlyDictionary<string, WeaponAttackProfile> attackProfiles =

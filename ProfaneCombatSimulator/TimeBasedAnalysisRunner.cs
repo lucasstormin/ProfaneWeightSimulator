@@ -23,26 +23,29 @@ public static class TimeBasedAnalysisRunner
         double[] healthWeights = new double[fights];
         double[] weaponDamageWeights = new double[fights];
         double[] attackSpeedWeights = new double[fights];
+        double[] armorWeights = new double[fights];
         AttackSpeedDiagnosticEntry[] attackSpeedDiagnostics = new AttackSpeedDiagnosticEntry[fights];
-        WeightedLoadout?[] minimums = new WeightedLoadout?[3];
-        WeightedLoadout?[] maximums = new WeightedLoadout?[3];
+        WeightedLoadout?[] minimums = new WeightedLoadout?[4];
+        WeightedLoadout?[] maximums = new WeightedLoadout?[4];
 
         int stalemates = 0;
         int draws = 0;
         int completedFights = 0;
         double completedDurationTotal = 0;
         int outcomeAgreements = 0;
+        int armorOutcomeAgreements = 0;
 
         for (int index = 0; index < fights; index++)
         {
             Loadout playerA = generator.Generate();
             Loadout playerB = generator.Generate();
 
-            (double health, double weaponDamage, double attackSpeed) =
+            (double health, double weaponDamage, double attackSpeed, double armor) =
                 CalculateWeights(playerA, gameData.CombatConfig);
             healthWeights[index] = health;
             weaponDamageWeights[index] = weaponDamage;
             attackSpeedWeights[index] = attackSpeed;
+            armorWeights[index] = armor;
             double cycleDamage = playerA.AttackProfile.Steps.Sum(step =>
                 DamageCalculator.CalculateRawDamage(playerA.Stats, step, gameData.CombatConfig));
             double baseCycleDuration = playerA.AttackProfile.Steps.Sum(step => step.TotalDuration);
@@ -54,7 +57,7 @@ public static class TimeBasedAnalysisRunner
                 DamagePerSecond = cycleDamage * speedFactor / baseCycleDuration,
                 Loadout = playerA
             };
-            UpdateExtremes(minimums, maximums, playerA, [health, weaponDamage, attackSpeed]);
+            UpdateExtremes(minimums, maximums, playerA, [health, weaponDamage, attackSpeed, armor]);
 
             TimedCombatResult baseFight =
                 TimeBasedCombatSimulator.Simulate(playerA, playerB, gameData.CombatConfig);
@@ -80,6 +83,17 @@ public static class TimeBasedAnalysisRunner
                 .Outcome;
             if (attackSpeedOutcome == attackPowerOutcome)
                 outcomeAgreements++;
+
+            Loadout armorBuffed = WithAddedStat(playerA, AttributeId.Armor, 1);
+            Loadout armorEquivalentAttackPower = WithAddedStat(playerA, AttributeId.AttackPower, armor);
+            CombatOutcome armorOutcome = TimeBasedCombatSimulator
+                .Simulate(armorBuffed, playerB, gameData.CombatConfig)
+                .Outcome;
+            CombatOutcome armorAttackPowerOutcome = TimeBasedCombatSimulator
+                .Simulate(armorEquivalentAttackPower, playerB, gameData.CombatConfig)
+                .Outcome;
+            if (armorOutcome == armorAttackPowerOutcome)
+                armorOutcomeAgreements++;
         }
 
         return new SimulationAnalysisResult
@@ -91,6 +105,8 @@ public static class TimeBasedAnalysisRunner
             AverageCompletedFightDuration = completedFights == 0 ? 0 : completedDurationTotal / completedFights,
             AttackSpeedValidationComparisons = fights,
             AttackSpeedOutcomeAgreements = outcomeAgreements,
+            ArmorValidationComparisons = fights,
+            ArmorOutcomeAgreements = armorOutcomeAgreements,
             AttackSpeedDiagnostics = attackSpeedDiagnostics,
             Health = CreateDistribution(
                 AttributeId.MaxHealth,
@@ -112,12 +128,19 @@ public static class TimeBasedAnalysisRunner
                 "1 percentage point",
                 attackSpeedWeights,
                 minimums[2]!,
-                maximums[2]!)
+                maximums[2]!),
+            Armor = CreateDistribution(
+                AttributeId.Armor,
+                "Armor",
+                "1 Armor",
+                armorWeights,
+                minimums[3]!,
+                maximums[3]!)
         };
     }
 
     // Derives smooth marginal weights from one profile's complete three-hit damage cycle.
-    public static (double Health, double WeaponDamage, double AttackSpeed) CalculateWeights(
+    public static (double Health, double WeaponDamage, double AttackSpeed, double Armor) CalculateWeights(
         Loadout loadout,
         CombatConfig config)
     {
@@ -132,11 +155,25 @@ public static class TimeBasedAnalysisRunner
         double speedFactor = 1 + loadout.Stats[AttributeId.AttackSpeed];
         if (speedFactor <= 0)
             throw new InvalidOperationException("Attack Speed must keep the duration divisor positive.");
+        double armorMarginalFraction = CalculateArmorMarginalFraction(
+            loadout.Stats[AttributeId.Armor],
+            config.PhysicalArmorConstant);
 
         return (
             cycleDamage / (loadout.Stats.MaxHealth * attackPowerCycleContribution),
             multiplierTotal / attackPowerCycleContribution,
-            cycleDamage * AttackSpeedUnit / (speedFactor * attackPowerCycleContribution));
+            cycleDamage * AttackSpeedUnit / (speedFactor * attackPowerCycleContribution),
+            cycleDamage * armorMarginalFraction / attackPowerCycleContribution);
+    }
+
+    // Calculates the fractional physical effective-Health gain from one additional Armor.
+    private static double CalculateArmorMarginalFraction(double armor, double armorConstant)
+    {
+        if (armor >= 0)
+            return armorConstant / (1 + armorConstant * armor);
+
+        return (2 * armorConstant / (1 - 2 * armorConstant * armor)) -
+            (armorConstant / (1 - armorConstant * armor));
     }
 
     // Copies a loadout while changing one immutable character stat for paired validation.

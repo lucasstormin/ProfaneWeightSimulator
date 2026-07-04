@@ -36,10 +36,12 @@ public static class TimeBasedCombatSimulator
             bool playerBHits = TimesMatch(stateB.NextContactTime, eventTime);
 
             double damageToB = playerAHits
-                ? DamageCalculator.CalculateDamage(stateA.Stats, stateA.CurrentStep, config)
+                ? DamageCalculator.CalculateDamage(
+                    stateA.Stats, stateA.CurrentStep, config, stateB.Stats[AttributeId.Armor])
                 : 0;
             double damageToA = playerBHits
-                ? DamageCalculator.CalculateDamage(stateB.Stats, stateB.CurrentStep, config)
+                ? DamageCalculator.CalculateDamage(
+                    stateB.Stats, stateB.CurrentStep, config, stateA.Stats[AttributeId.Armor])
                 : 0;
 
             if (playerAHits)

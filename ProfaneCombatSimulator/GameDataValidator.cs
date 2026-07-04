@@ -33,6 +33,8 @@ public static class GameDataValidator
             throw new InvalidDataException("Starting Health must be positive.");
         if (gameData.CombatConfig.AttackPowerMultiplier <= 0)
             throw new InvalidDataException("Attack Power multiplier must be positive.");
+        if (gameData.CombatConfig.PhysicalArmorConstant <= 0)
+            throw new InvalidDataException("Physical Armor constant must be positive.");
         if (gameData.Items.Count == 0)
             throw new InvalidDataException("The spreadsheet contains no importable items.");
 

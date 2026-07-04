@@ -62,6 +62,7 @@ static void PrintReport(SimulationAnalysisResult result)
     PrintSummaryRow(result.WeaponDamage);
     PrintSummaryRow(result.Health);
     PrintSummaryRow(result.AttackSpeed);
+    PrintSummaryRow(result.Armor);
     Console.WriteLine();
 
     Console.WriteLine("TIME-BASED VALIDATION");
@@ -72,6 +73,7 @@ static void PrintReport(SimulationAnalysisResult result)
         Console.WriteLine($"Draws: {result.Draws:N0} of {result.SimulatedFights:N0} fights");
     Console.WriteLine($"Maximum fight duration: {TimeBasedCombatSimulator.DefaultMaximumDuration:N0} seconds");
     Console.WriteLine($"Attack Speed/AP outcome agreement: {result.AttackSpeedOutcomeAgreementRate:F2}%");
+    Console.WriteLine($"Armor/AP outcome agreement: {result.ArmorOutcomeAgreementRate:F2}%");
     Console.WriteLine("Formula/profile validation: Passed");
     Console.WriteLine("Timing simulation: Passed");
     Console.WriteLine();
@@ -81,6 +83,7 @@ static void PrintReport(SimulationAnalysisResult result)
     PrintDetails(result.Health);
     PrintDetails(result.WeaponDamage);
     PrintDetails(result.AttackSpeed);
+    PrintDetails(result.Armor);
     Console.WriteLine();
 
     Console.WriteLine("LEGEND");
@@ -90,6 +93,7 @@ static void PrintReport(SimulationAnalysisResult result)
     Console.WriteLine("SD: How much the weight varies between loadouts; lower is more consistent.");
     Console.WriteLine("Observed: Lowest and highest weights found in the simulation.");
     Console.WriteLine("Attack Speed/AP agreement: Fights where +1% Attack Speed and its calculated AP equivalent had the same outcome.");
+    Console.WriteLine("Armor/AP agreement: Fights where +1 Armor and its calculated AP equivalent had the same outcome.");
 }
 
 // Prints one contextual attribute in the scalable summary table.
