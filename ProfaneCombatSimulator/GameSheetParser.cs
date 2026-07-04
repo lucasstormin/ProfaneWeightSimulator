@@ -6,10 +6,12 @@ namespace CombatSimulator.Data;
 // Converts the workbook's authoritative final-value sections into simulator game data.
 public static partial class GameSheetParser
 {
+    // Imports starting stats, combat settings, items, and weapon attack profiles.
     public static GameData Parse(SpreadsheetWorkbook workbook)
     {
         WorksheetData caps = workbook.Sheet("Caps and Attribute distribution");
         WorksheetData combat = workbook.Sheet("Combat Information");
+        ValidateAttackSpeedInformation(workbook.Sheet("Attack Speed Information"));
 
         CharacterStatsBuilder startingStats = new();
         startingStats.Set(AttributeId.AttackPower, FindMinimum(caps, AttributeId.AttackPower));
@@ -18,9 +20,11 @@ public static partial class GameSheetParser
 
         CombatConfig config = new()
         {
-            AttackPowerMultiplier = FindSetting(combat, "AttackPowerMultiplier"),
-            WeaponDamageMultiplier = FindSetting(combat, "WeaponDamageMultiplier")
+            AttackPowerMultiplier = FindSetting(combat, "AttackPowerMultiplier")
         };
+
+        IReadOnlyDictionary<string, WeaponAttackProfile> attackProfiles =
+            ParseAttackProfiles(workbook.Sheet("Weapon Attack Profile Informati"));
 
         List<Item> items = [];
         items.AddRange(ParseArmor(workbook.Sheet("Sets (armors) lists and attribu")));
@@ -31,13 +35,15 @@ public static partial class GameSheetParser
         {
             StartingStats = startingStats.Build(),
             CombatConfig = config,
-            Items = items
+            Items = items,
+            AttackProfiles = attackProfiles
         };
 
         GameDataValidator.Validate(gameData);
         return gameData;
     }
 
+    // Imports armor-piece attributes until the intentionally excluded artifact section.
     private static IEnumerable<Item> ParseArmor(WorksheetData sheet)
     {
         List<Item> items = [];
@@ -73,15 +79,14 @@ public static partial class GameSheetParser
             {
                 double? value = sheet.Number(row, 5 + index);
                 if (value.HasValue)
-                    currentItems[index].AddAttribute(
-                        attribute,
-                        AttributeCatalog.NormalizeImportedValue(attribute, value.Value));
+                    AddImportedAttribute(currentItems[index], attribute, value.Value);
             }
         }
 
         return items;
     }
 
+    // Imports rings and amulets while preserving their authoritative final values.
     private static IEnumerable<Item> ParseAccessories(WorksheetData sheet)
     {
         List<Item> items = [];
@@ -118,17 +123,13 @@ public static partial class GameSheetParser
 
             double? value = sheet.Number(row, 4);
             if (value.HasValue)
-            {
-                AttributeId attribute = ParseAttribute(firstColumn);
-                currentItem.AddAttribute(
-                    attribute,
-                    AttributeCatalog.NormalizeImportedValue(attribute, value.Value));
-            }
+                AddImportedAttribute(currentItem, ParseAttribute(firstColumn), value.Value);
         }
 
         return items;
     }
 
+    // Imports main-hand and off-hand items plus each main-hand's profile mapping.
     private static IEnumerable<Item> ParseWeapons(WorksheetData sheet)
     {
         List<Item> items = [];
@@ -153,26 +154,93 @@ public static partial class GameSheetParser
                 !string.IsNullOrWhiteSpace(firstColumn))
             {
                 currentItem = NewItem(firstColumn, section.Value);
+                TryAssignAttackProfile(currentItem, sheet.Text(row, 5));
                 items.Add(currentItem);
                 continue;
             }
 
-            if (currentItem is null || string.IsNullOrWhiteSpace(firstColumn))
+            if (currentItem is null)
+                continue;
+
+            TryAssignAttackProfile(currentItem, sheet.Text(row, 5));
+            if (string.IsNullOrWhiteSpace(firstColumn))
                 continue;
 
             double? value = sheet.Number(row, 4);
             if (value.HasValue)
-            {
-                AttributeId attribute = ParseAttribute(firstColumn);
-                currentItem.AddAttribute(
-                    attribute,
-                    AttributeCatalog.NormalizeImportedValue(attribute, value.Value));
-            }
+                AddImportedAttribute(currentItem, ParseAttribute(firstColumn), value.Value);
         }
 
         return items;
     }
 
+    // Imports three ordered attacks for every profile listed in the profile table.
+    private static IReadOnlyDictionary<string, WeaponAttackProfile> ParseAttackProfiles(WorksheetData sheet)
+    {
+        Dictionary<string, List<AttackStep>> groupedSteps = new(StringComparer.OrdinalIgnoreCase);
+
+        for (int row = 3; row <= sheet.MaximumRow; row++)
+        {
+            string? label = sheet.Text(row, 1)?.Trim();
+            Match match = AttackProfileRowRegex().Match(label ?? string.Empty);
+            if (!match.Success)
+                continue;
+
+            string profileName = NormalizeProfileName(match.Groups["profile"].Value);
+            int sequence = int.Parse(match.Groups["sequence"].Value);
+            AttackStep step = new()
+            {
+                Sequence = sequence,
+                Anticipation = RequiredNumber(sheet, row, 2, "Anticipation"),
+                Contact = RequiredNumber(sheet, row, 3, "Contact"),
+                Recovery = RequiredNumber(sheet, row, 4, "Recovery"),
+                WeaponDamageMultiplier = RequiredNumber(sheet, row, 5, "Weapon Damage Multiplier")
+            };
+
+            if (!groupedSteps.TryGetValue(profileName, out List<AttackStep>? steps))
+            {
+                steps = [];
+                groupedSteps.Add(profileName, steps);
+            }
+            steps.Add(step);
+        }
+
+        return groupedSteps.ToDictionary(
+            entry => entry.Key,
+            entry => new WeaponAttackProfile
+            {
+                Name = entry.Key,
+                Steps = entry.Value.OrderBy(step => step.Sequence).ToArray()
+            },
+            StringComparer.OrdinalIgnoreCase);
+    }
+
+    // Applies spreadsheet rounding metadata before storing an item attribute.
+    private static void AddImportedAttribute(Item item, AttributeId attribute, double value)
+    {
+        item.AddAttribute(attribute, AttributeCatalog.NormalizeImportedValue(attribute, value));
+    }
+
+    // Assigns a non-header profile name found anywhere in the current weapon block.
+    private static void TryAssignAttackProfile(Item item, string? profileName)
+    {
+        string? normalized = profileName is null ? null : NormalizeProfileName(profileName);
+        if (string.IsNullOrWhiteSpace(normalized) ||
+            normalized.Equals("Profile", StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        if (item.AttackProfileName is not null &&
+            !item.AttackProfileName.Equals(normalized, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidDataException($"Weapon '{item.Name}' maps to more than one attack profile.");
+        }
+
+        item.AttackProfileName = normalized;
+    }
+
+    // Creates an item and rejects unnamed spreadsheet blocks.
     private static Item NewItem(string? name, EquipmentSlot slot)
     {
         if (string.IsNullOrWhiteSpace(name))
@@ -180,6 +248,7 @@ public static partial class GameSheetParser
         return new Item { Name = name.Trim(), Slot = slot };
     }
 
+    // Finds an attribute's starting value in the caps table.
     private static double FindMinimum(WorksheetData sheet, AttributeId targetAttribute)
     {
         for (int row = 1; row <= sheet.MaximumRow; row++)
@@ -195,17 +264,49 @@ public static partial class GameSheetParser
         throw new InvalidDataException($"Attribute '{targetAttribute}' was not found in the caps tab.");
     }
 
+    // Finds a required numeric combat setting by its spreadsheet label.
     private static double FindSetting(WorksheetData sheet, string settingName)
     {
         for (int row = 1; row <= sheet.MaximumRow; row++)
         {
             if (string.Equals(sheet.Text(row, 1)?.Trim(), settingName, StringComparison.OrdinalIgnoreCase))
-                return sheet.Number(row, 2) ?? throw new InvalidDataException($"'{settingName}' has no value.");
+                return sheet.Number(row, 2) ?? throw new InvalidDataException($"'{settingName}' has no numeric value.");
         }
 
         throw new InvalidDataException($"Combat setting '{settingName}' was not found.");
     }
 
+    // Reads a required numeric profile cell and reports its exact location when missing.
+    private static double RequiredNumber(WorksheetData sheet, int row, int column, string label)
+    {
+        return sheet.Number(row, column)
+            ?? throw new InvalidDataException($"Profile row {row} has no numeric {label} value.");
+    }
+
+    // Confirms the authoritative rules tab still describes duration scaling and unrounded bonuses.
+    private static void ValidateAttackSpeedInformation(WorksheetData sheet)
+    {
+        List<string> cells = [];
+        for (int row = 1; row <= sheet.MaximumRow; row++)
+        {
+            for (int column = 1; column <= 10; column++)
+            {
+                if (sheet.Text(row, column) is { } value)
+                    cells.Add(value);
+            }
+        }
+
+        string rules = string.Join(' ', cells);
+        if (!rules.Contains("Attack Duration", StringComparison.OrdinalIgnoreCase) ||
+            !rules.Contains("Attack Speed Bonus", StringComparison.OrdinalIgnoreCase) ||
+            !rules.Contains("not rounded", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidDataException(
+                "The Attack Speed Information tab no longer contains the expected duration formula and rounding rule.");
+        }
+    }
+
+    // Converts a decorated spreadsheet label into a typed attribute identifier.
     private static AttributeId ParseAttribute(string value)
     {
         string label = NormalizeAttributeName(value);
@@ -215,12 +316,27 @@ public static partial class GameSheetParser
         throw new InvalidDataException($"Unknown spreadsheet attribute '{label}'. Add it to AttributeCatalog before importing it.");
     }
 
+    // Removes color markers while preserving the authoritative attribute label.
     private static string NormalizeAttributeName(string value)
     {
-        string withoutSymbols = AttributeDecorationRegex().Replace(value, string.Empty).Trim();
-        return withoutSymbols;
+        return AttributeDecorationRegex().Replace(value, string.Empty).Trim();
     }
 
+    // Removes explanatory parenthetical suffixes so profile mappings use stable canonical names.
+    private static string NormalizeProfileName(string value)
+    {
+        return ProfileSuffixRegex().Replace(value.Trim(), string.Empty).Trim();
+    }
+
+    // Matches visual rarity markers that are not part of an attribute's name.
     [GeneratedRegex("[🔵🟣🟢]")]
     private static partial Regex AttributeDecorationRegex();
+
+    // Extracts a canonical profile name and ordered attack number from a row label.
+    [GeneratedRegex("^(?<profile>.+) Profile: Attack (?<sequence>[123])$")]
+    private static partial Regex AttackProfileRowRegex();
+
+    // Removes explanatory aliases appended to a canonical profile mapping.
+    [GeneratedRegex("\\s*\\([^)]*\\)$")]
+    private static partial Regex ProfileSuffixRegex();
 }

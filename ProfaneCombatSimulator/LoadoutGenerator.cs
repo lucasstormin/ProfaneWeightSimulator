@@ -7,19 +7,24 @@ namespace CombatSimulator.Analysis;
 public sealed class LoadoutGenerator
 {
     private readonly CharacterStats startingStats;
+    private readonly IReadOnlyDictionary<string, WeaponAttackProfile> attackProfiles;
     private readonly Dictionary<EquipmentSlot, Item[]> itemsBySlot;
     private readonly Item[] weapons;
     private readonly Random random;
 
+    // Indexes eligible equipment and initializes the reproducible random sequence.
     public LoadoutGenerator(GameData gameData, int seed)
     {
         startingStats = gameData.StartingStats;
+        attackProfiles = gameData.AttackProfiles;
         random = new Random(seed);
         itemsBySlot = gameData.Items
             .GroupBy(item => item.Slot)
             .ToDictionary(group => group.Key, group => group.ToArray());
         weapons = gameData.Items
-            .Where(item => item.Slot is EquipmentSlot.OneHandedWeapon or EquipmentSlot.TwoHandedWeapon)
+            .Where(item =>
+                (item.Slot is EquipmentSlot.OneHandedWeapon or EquipmentSlot.TwoHandedWeapon) &&
+                !item.IsBow)
             .ToArray();
 
         foreach (EquipmentSlot slot in new[]
@@ -36,6 +41,7 @@ public sealed class LoadoutGenerator
             throw new InvalidDataException("No main-hand weapons were imported.");
     }
 
+    // Produces one fully equipped legal loadout and resolves its weapon profile.
     public Loadout Generate()
     {
         Item[] equipped = new Item[10];
@@ -69,9 +75,11 @@ public sealed class LoadoutGenerator
         }
 
         stats.Set(AttributeId.WeaponDamage, weapon.GetAttribute(AttributeId.WeaponDamage));
-        return new Loadout { Stats = stats.Build(), Items = equipped };
+        WeaponAttackProfile profile = attackProfiles[weapon.AttackProfileName!];
+        return new Loadout { Stats = stats.Build(), Items = equipped, AttackProfile = profile };
     }
 
+    // Selects one uniformly random item from a required equipment slot.
     private Item Pick(EquipmentSlot slot)
     {
         Item[] candidates = itemsBySlot[slot];

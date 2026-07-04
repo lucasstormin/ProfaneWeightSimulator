@@ -43,9 +43,11 @@ public static class AttributeCatalog
         AttributeId.Stealth
     ];
 
+    // Converts an authoritative spreadsheet label into a stable typed identifier.
     public static bool TryParse(string label, out AttributeId attribute) =>
         Labels.TryGetValue(label, out attribute);
 
+    // Applies the sheet's whole-number rule only to attributes that require it.
     public static double NormalizeImportedValue(AttributeId attribute, double value) =>
         WholeNumberAttributes.Contains(attribute) ? Math.Round(value) : value;
 }

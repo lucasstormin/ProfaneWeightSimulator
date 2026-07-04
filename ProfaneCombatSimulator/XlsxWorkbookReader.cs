@@ -12,6 +12,7 @@ public static class XlsxWorkbookReader
     private static readonly XNamespace RelationshipNamespace =
         "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
 
+    // Opens the XLSX package and materializes every worksheet needed by the importer.
     public static SpreadsheetWorkbook Read(string path)
     {
         using ZipArchive archive = ZipFile.OpenRead(path);
@@ -39,6 +40,7 @@ public static class XlsxWorkbookReader
         return new SpreadsheetWorkbook(worksheets);
     }
 
+    // Decodes cached and inline cell values while enforcing a defensive size limit.
     private static WorksheetData ReadWorksheet(
         ZipArchive archive,
         string entryPath,
@@ -76,6 +78,7 @@ public static class XlsxWorkbookReader
         return new WorksheetData(name, cells);
     }
 
+    // Reads the XLSX string table used by indexed text cells.
     private static IReadOnlyList<string> ReadSharedStrings(ZipArchive archive)
     {
         ZipArchiveEntry? entry = archive.GetEntry("xl/sharedStrings.xml");
@@ -90,6 +93,7 @@ public static class XlsxWorkbookReader
             .ToArray();
     }
 
+    // Maps workbook relationship IDs to their worksheet package paths.
     private static Dictionary<string, string> ReadWorkbookRelationships(ZipArchive archive)
     {
         XNamespace packageRelationships =
@@ -103,6 +107,7 @@ public static class XlsxWorkbookReader
                 relationship => (string)relationship.Attribute("Target")!);
     }
 
+    // Loads one required XML entry and fails clearly when the package is incomplete.
     private static XDocument LoadXml(ZipArchive archive, string path)
     {
         ZipArchiveEntry entry = archive.GetEntry(path)
@@ -111,6 +116,7 @@ public static class XlsxWorkbookReader
         return XDocument.Load(stream);
     }
 
+    // Converts an A1-style XLSX reference into one-based row and column indexes.
     private static (int Row, int Column) ParseCellReference(string reference)
     {
         int column = 0;

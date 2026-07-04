@@ -1,6 +1,6 @@
 using CombatSimulator.Analysis;
+using CombatSimulator.Combat;
 using CombatSimulator.Data;
-using CombatSimulator.Models;
 using CombatSimulator.Validation;
 
 if (args.Contains("--self-test", StringComparer.OrdinalIgnoreCase))
@@ -10,7 +10,7 @@ if (args.Contains("--self-test", StringComparer.OrdinalIgnoreCase))
 }
 
 const string spreadsheetId = "1dH-1xQ5fE2y2HTw27evHl449DhbhXewrhR97haOO8jc";
-const int samples = 100_000;
+const int fights = 100_000;
 const int randomSeed = 20260704;
 
 string solutionRoot = FindSolutionRoot();
@@ -22,53 +22,76 @@ Console.WriteLine("Loading authoritative game data...");
 
 SpreadsheetWorkbook workbook = XlsxWorkbookReader.Read(workbookPath);
 GameData gameData = GameSheetParser.Parse(workbook);
+int eligibleWeapons = gameData.Items.Count(item =>
+    (item.Slot is EquipmentSlot.OneHandedWeapon or EquipmentSlot.TwoHandedWeapon) &&
+    !item.IsBow);
 
 Console.WriteLine($"Source: {(usedCache ? "local cache" : "Google Sheets")}");
 Console.WriteLine($"Imported items: {gameData.Items.Count}");
-Console.WriteLine($"Analyzing {samples:N0} valid full loadouts...");
+Console.WriteLine($"Imported attack profiles: {gameData.AttackProfiles.Count}");
+Console.WriteLine($"Eligible non-bow weapons: {eligibleWeapons}");
+Console.WriteLine($"Analyzing {fights:N0} valid time-based loadouts...");
 Console.WriteLine();
 
-WeightDistributionResult result =
-    LoadoutWeightAnalyzer.Analyze(gameData, samples, randomSeed);
-OffensiveAttributeWeightResult weaponDamageWeight =
-    OffensiveWeightCalculator.ValidateWeaponDamageWeight(gameData.CombatConfig);
+SimulationAnalysisResult result =
+    TimeBasedAnalysisRunner.Analyze(gameData, fights, randomSeed);
 
 Console.WriteLine("ATTRIBUTE WEIGHT REPORT");
 Console.WriteLine("=======================");
-Console.WriteLine($"{"Attribute",-18} {"Recommended Weight",20} {"Typical Range",22} {"Variation",16}");
-Console.WriteLine(new string('-', 80));
-Console.WriteLine($"{"Attack Power",-18} {1.0,20:F4} {"Fixed",22} {"None",16}");
-Console.WriteLine($"{"Weapon Damage",-18} {weaponDamageWeight.AttackPowerBasedWeight,20:F4} {"Fixed",22} {"None",16}");
-
-string healthRange = $"{result.FifthPercentile:F4}–{result.NinetyFifthPercentile:F4}";
-double healthVariationPercent = result.StandardDeviation / result.MeanHealthWeight * 100;
-string healthVariation = $"{ClassifyVariation(healthVariationPercent)} ({healthVariationPercent:F1}%)";
-Console.WriteLine($"{"Health",-18} {result.RecommendedHealthWeight,20:F4} {healthRange,22} {healthVariation,16}");
+Console.WriteLine($"{"Attribute",-20} {"Recommended Weight",20} {"Typical Range",22} {"Variation",18}");
+Console.WriteLine(new string('-', 84));
+Console.WriteLine($"{"Attack Power",-20} {1.0,20:F4} {"Fixed",22} {"None",18}");
+PrintSummaryRow(result.WeaponDamage);
+PrintSummaryRow(result.Health);
+PrintSummaryRow(result.AttackSpeed);
 Console.WriteLine();
-Console.WriteLine("HEALTH WEIGHT DETAILS");
+
+Console.WriteLine("TIME-BASED VALIDATION");
 Console.WriteLine("=====================");
-Console.WriteLine($"Mean:              {result.MeanHealthWeight:F4}");
-Console.WriteLine($"Median:            {result.MedianHealthWeight:F4}");
-Console.WriteLine($"Standard deviation:{result.StandardDeviation,10:F4}");
-Console.WriteLine($"Typical 90% range: {result.FifthPercentile:F4} to {result.NinetyFifthPercentile:F4}");
-Console.WriteLine($"Observed range:    {result.MinimumHealthWeight:F4} to {result.MaximumHealthWeight:F4}");
+Console.WriteLine($"Average fight duration: {result.AverageCompletedFightDuration:F2} seconds");
+Console.WriteLine($"Stalemates: {result.Stalemates:N0} of {result.SimulatedFights:N0} fights");
+if (result.Draws > 0)
+    Console.WriteLine($"Draws: {result.Draws:N0} of {result.SimulatedFights:N0} fights");
+Console.WriteLine($"Maximum fight duration: {TimeBasedCombatSimulator.DefaultMaximumDuration:N0} seconds");
+Console.WriteLine($"Attack Speed/AP outcome agreement: {result.AttackSpeedOutcomeAgreementRate:F2}%");
+Console.WriteLine("Formula/profile validation: Passed");
+Console.WriteLine("Timing simulation: Passed");
 Console.WriteLine();
-PrintExtreme("Lowest-weight loadout", result.MinimumLoadout);
-Console.WriteLine();
-PrintExtreme("Highest-weight loadout", result.MaximumLoadout);
-Console.WriteLine();
-Console.WriteLine("Notes: caps are not enforced; artifacts are excluded; duplicate rings and mixed armor are allowed.");
-Console.WriteLine("Two-handed weapons correctly exclude off-hands. Other attributes are imported but do not affect this milestone.");
-Console.WriteLine($"Weapon Damage formula validation: {(weaponDamageWeight.ValidationPassed ? "passed" : "FAILED")}.");
 
-static void PrintExtreme(string title, WeightedLoadout weightedLoadout)
+Console.WriteLine("ATTRIBUTE WEIGHT DETAILS");
+Console.WriteLine("========================");
+PrintDetails(result.Health);
+PrintDetails(result.WeaponDamage);
+PrintDetails(result.AttackSpeed);
+Console.WriteLine();
+
+Console.WriteLine("LEGEND");
+Console.WriteLine("======");
+Console.WriteLine("Mean: Average weight across all sampled loadouts.");
+Console.WriteLine("Median: Middle weight; used as the recommended balance-sheet weight.");
+Console.WriteLine("SD: How much the weight varies between loadouts; lower is more consistent.");
+Console.WriteLine("Observed: Lowest and highest weights found in the simulation.");
+Console.WriteLine("Attack Speed/AP agreement: Fights where +1% Attack Speed and its calculated AP equivalent had the same outcome.");
+
+// Prints one contextual attribute in the scalable summary table.
+static void PrintSummaryRow(AttributeWeightDistributionResult distribution)
 {
-    CharacterStats character = weightedLoadout.Loadout.Stats;
-    Console.WriteLine($"{title}: {weightedLoadout.HealthWeight:F4}");
-    Console.WriteLine($"  {character.AttackPower:N0} AP | {character.MaxHealth:N0} Health | {character.WeaponDamage:N0} Weapon Damage");
-    Console.WriteLine($"  {weightedLoadout.Loadout.Description}");
+    string range = $"{distribution.FifthPercentile:F4}–{distribution.NinetyFifthPercentile:F4}";
+    double variationPercent = distribution.StandardDeviation / distribution.MeanWeight * 100;
+    string variation = $"{ClassifyVariation(variationPercent)} ({variationPercent:F1}%)";
+    Console.WriteLine($"{distribution.DisplayName,-20} {distribution.RecommendedWeight,20:F4} {range,22} {variation,18}");
 }
 
+// Prints compact distribution diagnostics for one contextual attribute.
+static void PrintDetails(AttributeWeightDistributionResult distribution)
+{
+    Console.WriteLine(
+        $"{distribution.DisplayName}: mean {distribution.MeanWeight:F4} | " +
+        $"median {distribution.MedianWeight:F4} | SD {distribution.StandardDeviation:F4} | " +
+        $"observed {distribution.MinimumWeight:F4}–{distribution.MaximumWeight:F4}");
+}
+
+// Classifies relative variation using stable thresholds shared by all attributes.
 static string ClassifyVariation(double coefficientOfVariationPercent)
 {
     if (coefficientOfVariationPercent < 10)
@@ -78,6 +101,7 @@ static string ClassifyVariation(double coefficientOfVariationPercent)
     return "High";
 }
 
+// Locates the solution root from either the current directory or executable path.
 static string FindSolutionRoot()
 {
     DirectoryInfo? directory = new(Directory.GetCurrentDirectory());

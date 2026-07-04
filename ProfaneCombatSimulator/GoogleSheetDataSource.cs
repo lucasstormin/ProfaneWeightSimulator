@@ -6,6 +6,7 @@ public static class GoogleSheetDataSource
     private const int MaximumWorkbookBytes = 25 * 1024 * 1024;
     private static readonly HttpClient Client = new() { Timeout = TimeSpan.FromSeconds(30) };
 
+    // Refreshes and validates the workbook atomically, retaining a safe offline fallback.
     public static async Task<(string Path, bool UsedCache)> GetWorkbookAsync(
         string spreadsheetId,
         string cachePath)

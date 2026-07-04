@@ -8,4 +8,5 @@ public sealed class GameData
     public required CharacterStats StartingStats { get; init; }
     public required CombatConfig CombatConfig { get; init; }
     public required IReadOnlyList<Item> Items { get; init; }
+    public required IReadOnlyDictionary<string, WeaponAttackProfile> AttackProfiles { get; init; }
 }

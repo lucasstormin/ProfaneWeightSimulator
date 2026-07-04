@@ -7,6 +7,7 @@ public sealed class WorksheetData
 {
     private readonly Dictionary<(int Row, int Column), string> cells;
 
+    // Indexes cached cells and records the final populated row for bounded scans.
     public WorksheetData(string name, Dictionary<(int Row, int Column), string> cells)
     {
         Name = name;
@@ -17,9 +18,11 @@ public sealed class WorksheetData
     public string Name { get; }
     public int MaximumRow { get; }
 
+    // Reads one cached cell as text without inventing values for blank cells.
     public string? Text(int row, int column) =>
         cells.TryGetValue((row, column), out string? value) ? value : null;
 
+    // Parses one cell using XLSX's invariant numeric representation.
     public double? Number(int row, int column)
     {
         string? value = Text(row, column);

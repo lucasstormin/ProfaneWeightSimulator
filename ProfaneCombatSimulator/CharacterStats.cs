@@ -5,6 +5,7 @@ public sealed class CharacterStats
 {
     private readonly double[] values;
 
+    // Takes a defensive copy so completed loadouts cannot be mutated later.
     internal CharacterStats(double[] values)
     {
         this.values = (double[])values.Clone();
@@ -15,6 +16,7 @@ public sealed class CharacterStats
     public double MaxHealth => this[AttributeId.MaxHealth];
     public double WeaponDamage => this[AttributeId.WeaponDamage];
 
+    // Returns a new snapshot with one contextual validation bonus applied.
     public CharacterStats WithAdded(AttributeId attribute, double amount)
     {
         double[] changedValues = (double[])values.Clone();
@@ -22,5 +24,6 @@ public sealed class CharacterStats
         return new CharacterStats(changedValues);
     }
 
+    // Supplies a defensive copy to builders that extend an existing snapshot.
     internal double[] CopyValues() => (double[])values.Clone();
 }
