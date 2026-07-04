@@ -1,0 +1,18 @@
+# Visual Studio and local tooling
+.vs/
+.agents/
+*.user
+*.suo
+
+# .NET build output
+**/bin/
+**/obj/
+
+# Downloaded/cached game data
+Data/*.xlsx
+*.download
+balance_source.xlsx
+
+# Temporary spreadsheet inspection artifacts
+sheet_previews/
+node_modules/
