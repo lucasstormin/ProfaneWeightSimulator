@@ -14,6 +14,9 @@ public static class RegressionSuite
         RunCheck("Typed attributes reject duplicates", TestDuplicateAttribute);
         RunCheck("Profile multipliers affect only Weapon Damage", TestDamageCalculation);
         RunCheck("Two-handed loadouts exclude off-hands and bows", TestTwoHandedLoadout);
+        RunCheck("Random mode permits mixed armor sets", TestRandomArmorGeneration);
+        RunCheck("Closed-set mode is complete and evenly distributed", TestClosedSetGeneration);
+        RunCheck("Incomplete armor sets are rejected", TestIncompleteArmorSet);
         RunCheck("Attack Speed scales contact timing", TestAttackSpeedTiming);
         RunCheck("Combo order repeats 1-2-3", TestComboOrder);
         RunCheck("Simultaneous lethal contacts draw", TestSimultaneousDraw);
@@ -52,6 +55,94 @@ public static class RegressionSuite
             throw new Exception("A bow entered the time-based loadout pool.");
         if (loadout.Items.Count(item => item.Slot == EquipmentSlot.Ring) != 2)
             throw new Exception("The loadout did not equip two rings.");
+    }
+
+    // Confirms unrestricted generation can combine armor pieces from different sets.
+    private static void TestRandomArmorGeneration()
+    {
+        LoadoutGenerator generator = new(CreateTestGameData(), 17);
+        bool foundMixedSet = Enumerable.Range(0, 100)
+            .Select(_ => generator.Generate())
+            .Any(loadout => loadout.Items
+                .Where(item => item.ArmorSetName is not null)
+                .Select(item => item.ArmorSetName)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .Count() > 1);
+        if (!foundMixedSet)
+            throw new Exception("Random generation did not produce any mixed-set armor loadout.");
+    }
+
+    // Confirms closed sets remain complete and remainder uses differ by no more than one.
+    private static void TestClosedSetGeneration()
+    {
+        const int loadoutCount = 21;
+        LoadoutGenerator first = new(
+            CreateTestGameData(), 23, LoadoutGenerationMode.ClosedArmorSet, loadoutCount);
+        LoadoutGenerator second = new(
+            CreateTestGameData(), 23, LoadoutGenerationMode.ClosedArmorSet, loadoutCount);
+        Loadout[] firstRun = Enumerable.Range(0, loadoutCount).Select(_ => first.Generate()).ToArray();
+        Loadout[] secondRun = Enumerable.Range(0, loadoutCount).Select(_ => second.Generate()).ToArray();
+
+        string[] firstSequence = firstRun.Select(GetOnlyArmorSet).ToArray();
+        string[] secondSequence = secondRun.Select(GetOnlyArmorSet).ToArray();
+        if (!firstSequence.SequenceEqual(secondSequence))
+            throw new Exception("Closed-set scheduling is not reproducible.");
+
+        int[] uses = firstSequence.GroupBy(name => name).Select(group => group.Count()).ToArray();
+        if (uses.Max() - uses.Min() > 1)
+            throw new Exception("Closed-set usage differs by more than one loadout.");
+        if (firstRun.Any(loadout => loadout.Items.Count(item => item.ArmorSetName is not null) != 5))
+            throw new Exception("A closed-set loadout did not equip exactly five armor pieces.");
+        if (firstRun.Select(loadout => loadout.Items.Single(item =>
+                item.Slot is EquipmentSlot.OneHandedWeapon or EquipmentSlot.TwoHandedWeapon).Name)
+            .Distinct().Count() < 2)
+        {
+            throw new Exception("Closed-set generation did not vary weapons independently.");
+        }
+        if (firstRun.Select(loadout => loadout.Items.Single(item => item.Slot == EquipmentSlot.Amulet).Name)
+            .Distinct().Count() < 2)
+        {
+            throw new Exception("Closed-set generation did not vary accessories independently.");
+        }
+
+        const int divisibleCount = 20;
+        LoadoutGenerator divisible = new(
+            CreateTestGameData(), 23, LoadoutGenerationMode.ClosedArmorSet, divisibleCount);
+        int[] divisibleUses = Enumerable.Range(0, divisibleCount)
+            .Select(_ => GetOnlyArmorSet(divisible.Generate()))
+            .GroupBy(name => name)
+            .Select(group => group.Count())
+            .ToArray();
+        if (divisibleUses.Any(usesPerSet => usesPerSet != 10))
+            throw new Exception("Divisible closed-set usage was not exactly equal.");
+
+    }
+
+    // Returns the single armor-set identity required from a closed-set loadout.
+    private static string GetOnlyArmorSet(Loadout loadout)
+    {
+        string[] sets = loadout.Items
+            .Where(item => item.ArmorSetName is not null)
+            .Select(item => item.ArmorSetName!)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        if (sets.Length != 1)
+            throw new Exception("A closed-set loadout mixed armor sets.");
+        return sets[0];
+    }
+
+    // Confirms malformed sheet data cannot silently produce partial closed sets.
+    private static void TestIncompleteArmorSet()
+    {
+        GameData valid = CreateTestGameData();
+        GameData incomplete = new()
+        {
+            StartingStats = valid.StartingStats,
+            CombatConfig = valid.CombatConfig,
+            AttackProfiles = valid.AttackProfiles,
+            Items = valid.Items.Where(item => item.Name != "B Greaves").ToArray()
+        };
+        AssertThrows<InvalidDataException>(() => GameDataValidator.Validate(incomplete));
     }
 
     // Confirms a 100% bonus halves the first Anticipation and contact timestamp.
@@ -141,6 +232,11 @@ public static class RegressionSuite
         AssertClose(first.Health.MedianWeight, second.Health.MedianWeight);
         AssertClose(first.AttackSpeed.MedianWeight, second.AttackSpeed.MedianWeight);
         AssertClose(first.AverageCompletedFightDuration, second.AverageCompletedFightDuration);
+        AssertClose(
+            first.AttackSpeedDiagnostics.Max(entry => entry.DamagePerSecond),
+            second.AttackSpeedDiagnostics.Max(entry => entry.DamagePerSecond));
+        if (first.AttackSpeedDiagnostics.Any(entry => entry.DamagePerSecond <= 0))
+            throw new Exception("A diagnostic build produced non-positive DPS.");
         if (first.Stalemates != second.Stalemates)
             throw new Exception("Seeded stalemate counts differ.");
         if (first.Draws != second.Draws)
@@ -154,15 +250,22 @@ public static class RegressionSuite
         WeaponAttackProfile profile = CreateProfile();
         List<Item> items =
         [
-            NewItem("Helmet", EquipmentSlot.Helmet, (AttributeId.MaxHealth, 10)),
-            NewItem("Chest", EquipmentSlot.Chest, (AttributeId.MaxHealth, 20)),
-            NewItem("Gloves", EquipmentSlot.Gloves, (AttributeId.AttackPower, 5)),
-            NewItem("Leggings", EquipmentSlot.Leggings, (AttributeId.MaxHealth, 20)),
-            NewItem("Greaves", EquipmentSlot.Greaves, (AttributeId.AttackPower, 5)),
+            NewArmor("A Helmet", EquipmentSlot.Helmet, "Set A", AttributeId.MaxHealth, 10),
+            NewArmor("A Chest", EquipmentSlot.Chest, "Set A", AttributeId.MaxHealth, 20),
+            NewArmor("A Gloves", EquipmentSlot.Gloves, "Set A", AttributeId.AttackPower, 5),
+            NewArmor("A Leggings", EquipmentSlot.Leggings, "Set A", AttributeId.MaxHealth, 20),
+            NewArmor("A Greaves", EquipmentSlot.Greaves, "Set A", AttributeId.AttackPower, 5),
+            NewArmor("B Helmet", EquipmentSlot.Helmet, "Set B", AttributeId.AttackPower, 2),
+            NewArmor("B Chest", EquipmentSlot.Chest, "Set B", AttributeId.MaxHealth, 15),
+            NewArmor("B Gloves", EquipmentSlot.Gloves, "Set B", AttributeId.AttackPower, 4),
+            NewArmor("B Leggings", EquipmentSlot.Leggings, "Set B", AttributeId.MaxHealth, 15),
+            NewArmor("B Greaves", EquipmentSlot.Greaves, "Set B", AttributeId.AttackPower, 4),
             NewWeapon("Greatsword", EquipmentSlot.TwoHandedWeapon, 125, profile.Name),
+            NewWeapon("Greataxe", EquipmentSlot.TwoHandedWeapon, 120, profile.Name),
             NewWeapon("Test Bow", EquipmentSlot.TwoHandedWeapon, 125, null),
             NewItem("Shield", EquipmentSlot.OffHand, (AttributeId.MaxHealth, 50)),
             NewItem("Amulet", EquipmentSlot.Amulet, (AttributeId.MaxHealth, 10)),
+            NewItem("Power Amulet", EquipmentSlot.Amulet, (AttributeId.AttackPower, 3)),
             NewItem("Ring", EquipmentSlot.Ring, (AttributeId.AttackPower, 2))
         ];
 
@@ -232,6 +335,19 @@ public static class RegressionSuite
         Item item = new() { Name = name, Slot = slot };
         foreach ((AttributeId attribute, double value) in attributes)
             item.AddAttribute(attribute, value);
+        return item;
+    }
+
+    // Creates one armor item carrying its authoritative set identity.
+    private static Item NewArmor(
+        string name,
+        EquipmentSlot slot,
+        string setName,
+        AttributeId attribute,
+        double value)
+    {
+        Item item = new() { Name = name, Slot = slot, ArmorSetName = setName };
+        item.AddAttribute(attribute, value);
         return item;
     }
 

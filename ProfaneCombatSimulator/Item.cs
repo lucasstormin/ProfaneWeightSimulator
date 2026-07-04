@@ -8,6 +8,7 @@ public sealed class Item
     public required string Name { get; init; }
     public required EquipmentSlot Slot { get; init; }
     public string? AttackProfileName { get; set; }
+    public string? ArmorSetName { get; init; }
     private readonly Dictionary<AttributeId, double> attributes = [];
 
     public IReadOnlyDictionary<AttributeId, double> Attributes => attributes;

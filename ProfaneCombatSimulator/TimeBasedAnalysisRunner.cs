@@ -10,12 +10,16 @@ public static class TimeBasedAnalysisRunner
     private const double AttackSpeedUnit = 0.01;
 
     // Runs weight sampling and deterministic combat validation with one reproducible seed.
-    public static SimulationAnalysisResult Analyze(GameData gameData, int fights, int seed)
+    public static SimulationAnalysisResult Analyze(
+        GameData gameData,
+        int fights,
+        int seed,
+        LoadoutGenerationMode mode = LoadoutGenerationMode.RandomPieces)
     {
         if (fights <= 0)
             throw new ArgumentOutOfRangeException(nameof(fights));
 
-        LoadoutGenerator generator = new(gameData, seed);
+        LoadoutGenerator generator = new(gameData, seed, mode, checked(fights * 2));
         double[] healthWeights = new double[fights];
         double[] weaponDamageWeights = new double[fights];
         double[] attackSpeedWeights = new double[fights];
@@ -41,10 +45,13 @@ public static class TimeBasedAnalysisRunner
             attackSpeedWeights[index] = attackSpeed;
             double cycleDamage = playerA.AttackProfile.Steps.Sum(step =>
                 DamageCalculator.CalculateRawDamage(playerA.Stats, step, gameData.CombatConfig));
+            double baseCycleDuration = playerA.AttackProfile.Steps.Sum(step => step.TotalDuration);
+            double speedFactor = 1 + playerA.Stats[AttributeId.AttackSpeed];
             attackSpeedDiagnostics[index] = new AttackSpeedDiagnosticEntry
             {
                 Weight = attackSpeed,
                 CycleDamage = cycleDamage,
+                DamagePerSecond = cycleDamage * speedFactor / baseCycleDuration,
                 Loadout = playerA
             };
             UpdateExtremes(minimums, maximums, playerA, [health, weaponDamage, attackSpeed]);

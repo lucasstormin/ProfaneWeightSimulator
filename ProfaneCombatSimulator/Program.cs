@@ -1,3 +1,5 @@
+using System.Globalization;
+using System.Text;
 using CombatSimulator.Analysis;
 using CombatSimulator.Combat;
 using CombatSimulator.Data;
@@ -11,7 +13,7 @@ if (args.Contains("--self-test", StringComparer.OrdinalIgnoreCase))
 }
 
 const string spreadsheetId = "1dH-1xQ5fE2y2HTw27evHl449DhbhXewrhR97haOO8jc";
-const int fights = 100_000;
+const int defaultFights = 100_000;
 const int randomSeed = 20260704;
 
 string solutionRoot = FindSolutionRoot();
@@ -31,57 +33,63 @@ Console.WriteLine($"Source: {(usedCache ? "local cache" : "Google Sheets")}");
 Console.WriteLine($"Imported items: {gameData.Items.Count}");
 Console.WriteLine($"Imported attack profiles: {gameData.AttackProfiles.Count}");
 Console.WriteLine($"Eligible non-bow weapons: {eligibleWeapons}");
-Console.WriteLine($"Analyzing {fights:N0} valid time-based loadouts...");
-Console.WriteLine();
-
-SimulationAnalysisResult result =
-    TimeBasedAnalysisRunner.Analyze(gameData, fights, randomSeed);
-
-Console.WriteLine("ATTRIBUTE WEIGHT REPORT");
-Console.WriteLine("=======================");
-Console.WriteLine($"{"Attribute",-20} {"Recommended Weight",20} {"Typical Range",22} {"Variation",18}");
-Console.WriteLine(new string('-', 84));
-Console.WriteLine($"{"Attack Power",-20} {1.0,20:F4} {"Fixed",22} {"None",18}");
-PrintSummaryRow(result.WeaponDamage);
-PrintSummaryRow(result.Health);
-PrintSummaryRow(result.AttackSpeed);
-Console.WriteLine();
-
-Console.WriteLine("TIME-BASED VALIDATION");
-Console.WriteLine("=====================");
-Console.WriteLine($"Average fight duration: {result.AverageCompletedFightDuration:F2} seconds");
-Console.WriteLine($"Stalemates: {result.Stalemates:N0} of {result.SimulatedFights:N0} fights");
-if (result.Draws > 0)
-    Console.WriteLine($"Draws: {result.Draws:N0} of {result.SimulatedFights:N0} fights");
-Console.WriteLine($"Maximum fight duration: {TimeBasedCombatSimulator.DefaultMaximumDuration:N0} seconds");
-Console.WriteLine($"Attack Speed/AP outcome agreement: {result.AttackSpeedOutcomeAgreementRate:F2}%");
-Console.WriteLine("Formula/profile validation: Passed");
-Console.WriteLine("Timing simulation: Passed");
-Console.WriteLine();
-
-Console.WriteLine("ATTRIBUTE WEIGHT DETAILS");
-Console.WriteLine("========================");
-PrintDetails(result.Health);
-PrintDetails(result.WeaponDamage);
-PrintDetails(result.AttackSpeed);
-Console.WriteLine();
-
-Console.WriteLine("LEGEND");
-Console.WriteLine("======");
-Console.WriteLine("Mean: Average weight across all sampled loadouts.");
-Console.WriteLine("Median: Middle weight; used as the recommended balance-sheet weight.");
-Console.WriteLine("SD: How much the weight varies between loadouts; lower is more consistent.");
-Console.WriteLine("Observed: Lowest and highest weights found in the simulation.");
-Console.WriteLine("Attack Speed/AP agreement: Fights where +1% Attack Speed and its calculated AP equivalent had the same outcome.");
-
-if (!Console.IsInputRedirected)
+while (true)
 {
+    int fights = ReadSimulationCount(defaultFights);
+    LoadoutGenerationMode generationMode = ReadGenerationMode();
+    Console.WriteLine($"Loadout mode: {DescribeGenerationMode(generationMode)}");
+    Console.WriteLine($"Analyzing {fights:N0} valid time-based loadouts...");
     Console.WriteLine();
-    Console.Write("Press D to inspect extreme Attack Speed builds, or any other key to exit: ");
-    ConsoleKeyInfo key = Console.ReadKey(intercept: true);
-    Console.WriteLine(key.Key == ConsoleKey.D ? "D" : string.Empty);
-    if (key.Key == ConsoleKey.D)
-        PrintAttackSpeedDiagnostics(result.AttackSpeedDiagnostics);
+
+    SimulationAnalysisResult result =
+        TimeBasedAnalysisRunner.Analyze(gameData, fights, randomSeed, generationMode);
+    PrintReport(result);
+
+    if (Console.IsInputRedirected || !HandlePostSimulationMenu(result))
+        break;
+
+    Console.WriteLine();
+}
+
+// Prints the complete weight and time-based validation report for one run.
+static void PrintReport(SimulationAnalysisResult result)
+{
+    Console.WriteLine("ATTRIBUTE WEIGHT REPORT");
+    Console.WriteLine("=======================");
+    Console.WriteLine($"{"Attribute",-20} {"Recommended Weight",20} {"Typical Range",22} {"Variation",18}");
+    Console.WriteLine(new string('-', 84));
+    Console.WriteLine($"{"Attack Power",-20} {1.0,20:F4} {"Fixed",22} {"None",18}");
+    PrintSummaryRow(result.WeaponDamage);
+    PrintSummaryRow(result.Health);
+    PrintSummaryRow(result.AttackSpeed);
+    Console.WriteLine();
+
+    Console.WriteLine("TIME-BASED VALIDATION");
+    Console.WriteLine("=====================");
+    Console.WriteLine($"Average fight duration: {result.AverageCompletedFightDuration:F2} seconds");
+    Console.WriteLine($"Stalemates: {result.Stalemates:N0} of {result.SimulatedFights:N0} fights");
+    if (result.Draws > 0)
+        Console.WriteLine($"Draws: {result.Draws:N0} of {result.SimulatedFights:N0} fights");
+    Console.WriteLine($"Maximum fight duration: {TimeBasedCombatSimulator.DefaultMaximumDuration:N0} seconds");
+    Console.WriteLine($"Attack Speed/AP outcome agreement: {result.AttackSpeedOutcomeAgreementRate:F2}%");
+    Console.WriteLine("Formula/profile validation: Passed");
+    Console.WriteLine("Timing simulation: Passed");
+    Console.WriteLine();
+
+    Console.WriteLine("ATTRIBUTE WEIGHT DETAILS");
+    Console.WriteLine("========================");
+    PrintDetails(result.Health);
+    PrintDetails(result.WeaponDamage);
+    PrintDetails(result.AttackSpeed);
+    Console.WriteLine();
+
+    Console.WriteLine("LEGEND");
+    Console.WriteLine("======");
+    Console.WriteLine("Mean: Average weight across all sampled loadouts.");
+    Console.WriteLine("Median: Middle weight; used as the recommended balance-sheet weight.");
+    Console.WriteLine("SD: How much the weight varies between loadouts; lower is more consistent.");
+    Console.WriteLine("Observed: Lowest and highest weights found in the simulation.");
+    Console.WriteLine("Attack Speed/AP agreement: Fights where +1% Attack Speed and its calculated AP equivalent had the same outcome.");
 }
 
 // Prints one contextual attribute in the scalable summary table.
@@ -102,37 +110,37 @@ static void PrintDetails(AttributeWeightDistributionResult distribution)
         $"observed {distribution.MinimumWeight:F4}–{distribution.MaximumWeight:F4}");
 }
 
-// Prints extreme sampled builds and weapon/profile patterns behind Attack Speed variation.
+// Prints the strongest sampled builds and their contextual Attack Speed values.
 static void PrintAttackSpeedDiagnostics(IReadOnlyList<AttackSpeedDiagnosticEntry> diagnostics)
 {
-    const int extremeCount = 20;
-    AttackSpeedDiagnosticEntry[] ordered = diagnostics.OrderBy(entry => entry.Weight).ToArray();
+    const int buildCount = 20;
+    AttackSpeedDiagnosticEntry[] strongest = diagnostics
+        .OrderByDescending(entry => entry.DamagePerSecond)
+        .Take(buildCount)
+        .ToArray();
 
     Console.WriteLine();
-    Console.WriteLine("ATTACK SPEED EXTREME BUILDS");
-    Console.WriteLine("===========================");
-    Console.WriteLine($"Lowest {Math.Min(extremeCount, ordered.Length)} sampled weights:");
-    foreach (AttackSpeedDiagnosticEntry entry in ordered.Take(extremeCount))
+    Console.WriteLine("STRONGEST SAMPLED BASIC-ATTACK BUILDS");
+    Console.WriteLine("======================================");
+    Console.WriteLine("Ranked by sustained unmitigated DPS; AS weight is the value of the next +1% Attack Speed.");
+    foreach (AttackSpeedDiagnosticEntry entry in strongest)
         PrintAttackSpeedBuild(entry);
 
     Console.WriteLine();
-    Console.WriteLine($"Highest {Math.Min(extremeCount, ordered.Length)} sampled weights:");
-    foreach (AttackSpeedDiagnosticEntry entry in ordered.TakeLast(extremeCount).Reverse())
-        PrintAttackSpeedBuild(entry);
-
-    Console.WriteLine();
-    Console.WriteLine("WEAPON/PROFILE SUMMARY");
-    Console.WriteLine("======================");
-    Console.WriteLine($"{"Weapon",-30} {"Profile",-22} {"Samples",8} {"Mean",9} {"95th",9} {"Maximum",9}");
-    Console.WriteLine(new string('-', 92));
+    Console.WriteLine("WEAPON/PROFILE DPS SUMMARY");
+    Console.WriteLine("==========================");
+    Console.WriteLine($"{"Weapon",-30} {"Profile",-22} {"Samples",8} {"Mean DPS",10} {"95th DPS",10} {"Max DPS",10} {"AS Weight",10}");
+    Console.WriteLine(new string('-', 107));
     foreach (IGrouping<(string Weapon, string Profile), AttackSpeedDiagnosticEntry> group in diagnostics
         .GroupBy(entry => (entry.Weapon.Name, entry.Loadout.AttackProfile.Name))
-        .OrderByDescending(group => group.Max(entry => entry.Weight)))
+        .OrderByDescending(group => group.Max(entry => entry.DamagePerSecond)))
     {
-        double[] weights = group.Select(entry => entry.Weight).Order().ToArray();
+        AttackSpeedDiagnosticEntry strongestForWeapon = group.MaxBy(entry => entry.DamagePerSecond)!;
+        double[] damagePerSecond = group.Select(entry => entry.DamagePerSecond).Order().ToArray();
         Console.WriteLine(
-            $"{group.Key.Weapon,-30} {group.Key.Profile,-22} {weights.Length,8:N0} " +
-            $"{weights.Average(),9:F4} {Percentile(weights, 0.95),9:F4} {weights[^1],9:F4}");
+            $"{group.Key.Weapon,-30} {group.Key.Profile,-22} {damagePerSecond.Length,8:N0} " +
+            $"{damagePerSecond.Average(),10:F2} {Percentile(damagePerSecond, 0.95),10:F2} " +
+            $"{damagePerSecond[^1],10:F2} {strongestForWeapon.Weight,10:F4}");
     }
 }
 
@@ -141,7 +149,8 @@ static void PrintAttackSpeedBuild(AttackSpeedDiagnosticEntry entry)
 {
     CharacterStats stats = entry.Loadout.Stats;
     Console.WriteLine(
-        $"  {entry.Weight:F4} | {entry.Weapon.Name} | {entry.Loadout.AttackProfile.Name} | " +
+        $"  DPS {entry.DamagePerSecond:F2} | AS weight {entry.Weight:F4} | " +
+        $"{entry.Weapon.Name} | {entry.Loadout.AttackProfile.Name} | " +
         $"AP {stats.AttackPower:F0} | WD {stats.WeaponDamage:F0} | " +
         $"AS {stats[AttributeId.AttackSpeed]:P2} | Cycle damage {entry.CycleDamage:F1}");
     Console.WriteLine($"    {entry.Loadout.Description}");
@@ -169,6 +178,148 @@ static string ClassifyVariation(double coefficientOfVariationPercent)
         return "Moderate";
     return "High";
 }
+
+// Reads a positive simulation count from an editable prefilled console field.
+static int ReadSimulationCount(int defaultValue)
+{
+    const int maximumFights = 1_000_000;
+    if (Console.IsInputRedirected)
+        return defaultValue;
+
+    Console.WriteLine();
+    string prompt = $"Number of simulations (1–{maximumFights:N0}): ";
+    StringBuilder value = new(defaultValue.ToString(CultureInfo.InvariantCulture));
+    int cursor = value.Length;
+    Console.Write(prompt);
+    Console.Write(value);
+
+    while (true)
+    {
+        ConsoleKeyInfo key = Console.ReadKey(intercept: true);
+        if (key.Key == ConsoleKey.Enter)
+        {
+            if (int.TryParse(value.ToString(), NumberStyles.None, CultureInfo.InvariantCulture, out int fights) &&
+                fights is > 0 and <= maximumFights)
+            {
+                Console.WriteLine();
+                return fights;
+            }
+
+            Console.WriteLine();
+            Console.WriteLine($"Enter a whole number from 1 to {maximumFights:N0}.");
+            value.Clear().Append(defaultValue.ToString(CultureInfo.InvariantCulture));
+            cursor = value.Length;
+            Console.Write(prompt);
+            Console.Write(value);
+            continue;
+        }
+
+        if (char.IsAsciiDigit(key.KeyChar))
+        {
+            value.Insert(cursor, key.KeyChar);
+            cursor++;
+        }
+        else if (key.Key == ConsoleKey.Backspace && cursor > 0)
+        {
+            value.Remove(cursor - 1, 1);
+            cursor--;
+        }
+        else if (key.Key == ConsoleKey.Delete && cursor < value.Length)
+        {
+            value.Remove(cursor, 1);
+        }
+        else if (key.Key == ConsoleKey.LeftArrow && cursor > 0)
+        {
+            cursor--;
+        }
+        else if (key.Key == ConsoleKey.RightArrow && cursor < value.Length)
+        {
+            cursor++;
+        }
+        else if (key.Key == ConsoleKey.Home)
+        {
+            cursor = 0;
+        }
+        else if (key.Key == ConsoleKey.End)
+        {
+            cursor = value.Length;
+        }
+        else
+        {
+            continue;
+        }
+
+        RedrawEditableValue(prompt, value, cursor);
+    }
+}
+
+// Redraws a short editable value and restores its logical cursor position.
+static void RedrawEditableValue(string prompt, StringBuilder value, int cursor)
+{
+    Console.Write('\r');
+    Console.Write(prompt);
+    Console.Write(value);
+    Console.Write(' ');
+    Console.CursorLeft = prompt.Length + cursor;
+}
+
+// Offers diagnostics or a fully reconfigured repeat run after each report.
+static bool HandlePostSimulationMenu(SimulationAnalysisResult result)
+{
+    while (true)
+    {
+        Console.WriteLine();
+        Console.Write("Press D for diagnostics, R to run another simulation, or any other key to exit: ");
+        ConsoleKeyInfo key = Console.ReadKey(intercept: true);
+        if (key.Key == ConsoleKey.D)
+        {
+            Console.WriteLine("D");
+            PrintAttackSpeedDiagnostics(result.AttackSpeedDiagnostics);
+            continue;
+        }
+        if (key.Key == ConsoleKey.R)
+        {
+            Console.WriteLine("R");
+            return true;
+        }
+
+        Console.WriteLine();
+        return false;
+    }
+}
+
+// Prompts interactive users for a loadout policy while keeping automated runs non-blocking.
+static LoadoutGenerationMode ReadGenerationMode()
+{
+    if (Console.IsInputRedirected)
+        return LoadoutGenerationMode.RandomPieces;
+
+    while (true)
+    {
+        Console.WriteLine();
+        Console.WriteLine("Press 1 to simulate allowing random pieces.");
+        Console.WriteLine("Press 2 to simulate with set restriction.");
+        ConsoleKeyInfo key = Console.ReadKey(intercept: true);
+        if (key.KeyChar == '1')
+        {
+            Console.WriteLine("1");
+            return LoadoutGenerationMode.RandomPieces;
+        }
+        if (key.KeyChar == '2')
+        {
+            Console.WriteLine("2");
+            return LoadoutGenerationMode.ClosedArmorSet;
+        }
+    }
+}
+
+// Converts the selected generation policy into a concise report label.
+static string DescribeGenerationMode(LoadoutGenerationMode mode) => mode switch
+{
+    LoadoutGenerationMode.RandomPieces => "Random armor pieces",
+    LoadoutGenerationMode.ClosedArmorSet => "Closed armor sets",
+    _ => throw new ArgumentOutOfRangeException(nameof(mode))
+};
 
 // Locates the solution root from either the current directory or executable path.
 static string FindSolutionRoot()

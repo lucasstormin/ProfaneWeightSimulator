@@ -7,6 +7,7 @@ public sealed class AttackSpeedDiagnosticEntry
 {
     public required double Weight { get; init; }
     public required double CycleDamage { get; init; }
+    public required double DamagePerSecond { get; init; }
     public required Loadout Loadout { get; init; }
 
     public Item Weapon => Loadout.Items.Single(item =>

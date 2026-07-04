@@ -5,6 +5,15 @@ namespace CombatSimulator.Data;
 // Rejects incomplete or contradictory imported game data before analysis begins.
 public static class GameDataValidator
 {
+    private static readonly EquipmentSlot[] ArmorSlots =
+    [
+        EquipmentSlot.Helmet,
+        EquipmentSlot.Chest,
+        EquipmentSlot.Gloves,
+        EquipmentSlot.Leggings,
+        EquipmentSlot.Greaves
+    ];
+
     private static readonly EquipmentSlot[] RequiredSlots =
     [
         EquipmentSlot.Helmet,
@@ -39,6 +48,23 @@ public static class GameDataValidator
         {
             if (!gameData.Items.Any(item => item.Slot == slot))
                 throw new InvalidDataException($"No items were imported for required slot '{slot}'.");
+        }
+
+        Item[] armorItems = gameData.Items.Where(item => ArmorSlots.Contains(item.Slot)).ToArray();
+        if (armorItems.Any(item => string.IsNullOrWhiteSpace(item.ArmorSetName)))
+            throw new InvalidDataException("Every armor item must belong to an authoritative armor set.");
+
+        foreach (IGrouping<string, Item> set in armorItems.GroupBy(item => item.ArmorSetName!, StringComparer.OrdinalIgnoreCase))
+        {
+            foreach (EquipmentSlot slot in ArmorSlots)
+            {
+                int count = set.Count(item => item.Slot == slot);
+                if (count != 1)
+                {
+                    throw new InvalidDataException(
+                        $"Armor set '{set.Key}' must contain exactly one '{slot}' item; found {count}.");
+                }
+            }
         }
 
         Item[] weapons = gameData.Items

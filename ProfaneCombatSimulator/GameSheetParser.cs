@@ -61,11 +61,11 @@ public static partial class GameSheetParser
             {
                 currentItems =
                 [
-                    NewItem(sheet.Text(row, 5), EquipmentSlot.Helmet),
-                    NewItem(sheet.Text(row, 6), EquipmentSlot.Chest),
-                    NewItem(sheet.Text(row, 7), EquipmentSlot.Gloves),
-                    NewItem(sheet.Text(row, 8), EquipmentSlot.Leggings),
-                    NewItem(sheet.Text(row, 9), EquipmentSlot.Greaves)
+                    NewItem(sheet.Text(row, 5), EquipmentSlot.Helmet, itemFamily),
+                    NewItem(sheet.Text(row, 6), EquipmentSlot.Chest, itemFamily),
+                    NewItem(sheet.Text(row, 7), EquipmentSlot.Gloves, itemFamily),
+                    NewItem(sheet.Text(row, 8), EquipmentSlot.Leggings, itemFamily),
+                    NewItem(sheet.Text(row, 9), EquipmentSlot.Greaves, itemFamily)
                 ];
                 items.AddRange(currentItems);
                 continue;
@@ -241,11 +241,16 @@ public static partial class GameSheetParser
     }
 
     // Creates an item and rejects unnamed spreadsheet blocks.
-    private static Item NewItem(string? name, EquipmentSlot slot)
+    private static Item NewItem(string? name, EquipmentSlot slot, string? armorSetName = null)
     {
         if (string.IsNullOrWhiteSpace(name))
             throw new InvalidDataException($"An item in slot '{slot}' has no name.");
-        return new Item { Name = name.Trim(), Slot = slot };
+        return new Item
+        {
+            Name = name.Trim(),
+            Slot = slot,
+            ArmorSetName = string.IsNullOrWhiteSpace(armorSetName) ? null : armorSetName.Trim()
+        };
     }
 
     // Finds an attribute's starting value in the caps table.
