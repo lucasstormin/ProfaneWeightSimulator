@@ -13,6 +13,7 @@ public sealed class SimulationAnalysisResult
     public required AttributeWeightDistributionResult Health { get; init; }
     public required AttributeWeightDistributionResult WeaponDamage { get; init; }
     public required AttributeWeightDistributionResult AttackSpeed { get; init; }
+    public required IReadOnlyList<AttackSpeedDiagnosticEntry> AttackSpeedDiagnostics { get; init; }
 
     public double AttackSpeedOutcomeAgreementRate =>
         AttackSpeedValidationComparisons == 0

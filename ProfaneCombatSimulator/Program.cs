@@ -1,6 +1,7 @@
 using CombatSimulator.Analysis;
 using CombatSimulator.Combat;
 using CombatSimulator.Data;
+using CombatSimulator.Models;
 using CombatSimulator.Validation;
 
 if (args.Contains("--self-test", StringComparer.OrdinalIgnoreCase))
@@ -73,6 +74,16 @@ Console.WriteLine("SD: How much the weight varies between loadouts; lower is mor
 Console.WriteLine("Observed: Lowest and highest weights found in the simulation.");
 Console.WriteLine("Attack Speed/AP agreement: Fights where +1% Attack Speed and its calculated AP equivalent had the same outcome.");
 
+if (!Console.IsInputRedirected)
+{
+    Console.WriteLine();
+    Console.Write("Press D to inspect extreme Attack Speed builds, or any other key to exit: ");
+    ConsoleKeyInfo key = Console.ReadKey(intercept: true);
+    Console.WriteLine(key.Key == ConsoleKey.D ? "D" : string.Empty);
+    if (key.Key == ConsoleKey.D)
+        PrintAttackSpeedDiagnostics(result.AttackSpeedDiagnostics);
+}
+
 // Prints one contextual attribute in the scalable summary table.
 static void PrintSummaryRow(AttributeWeightDistributionResult distribution)
 {
@@ -89,6 +100,64 @@ static void PrintDetails(AttributeWeightDistributionResult distribution)
         $"{distribution.DisplayName}: mean {distribution.MeanWeight:F4} | " +
         $"median {distribution.MedianWeight:F4} | SD {distribution.StandardDeviation:F4} | " +
         $"observed {distribution.MinimumWeight:F4}–{distribution.MaximumWeight:F4}");
+}
+
+// Prints extreme sampled builds and weapon/profile patterns behind Attack Speed variation.
+static void PrintAttackSpeedDiagnostics(IReadOnlyList<AttackSpeedDiagnosticEntry> diagnostics)
+{
+    const int extremeCount = 20;
+    AttackSpeedDiagnosticEntry[] ordered = diagnostics.OrderBy(entry => entry.Weight).ToArray();
+
+    Console.WriteLine();
+    Console.WriteLine("ATTACK SPEED EXTREME BUILDS");
+    Console.WriteLine("===========================");
+    Console.WriteLine($"Lowest {Math.Min(extremeCount, ordered.Length)} sampled weights:");
+    foreach (AttackSpeedDiagnosticEntry entry in ordered.Take(extremeCount))
+        PrintAttackSpeedBuild(entry);
+
+    Console.WriteLine();
+    Console.WriteLine($"Highest {Math.Min(extremeCount, ordered.Length)} sampled weights:");
+    foreach (AttackSpeedDiagnosticEntry entry in ordered.TakeLast(extremeCount).Reverse())
+        PrintAttackSpeedBuild(entry);
+
+    Console.WriteLine();
+    Console.WriteLine("WEAPON/PROFILE SUMMARY");
+    Console.WriteLine("======================");
+    Console.WriteLine($"{"Weapon",-30} {"Profile",-22} {"Samples",8} {"Mean",9} {"95th",9} {"Maximum",9}");
+    Console.WriteLine(new string('-', 92));
+    foreach (IGrouping<(string Weapon, string Profile), AttackSpeedDiagnosticEntry> group in diagnostics
+        .GroupBy(entry => (entry.Weapon.Name, entry.Loadout.AttackProfile.Name))
+        .OrderByDescending(group => group.Max(entry => entry.Weight)))
+    {
+        double[] weights = group.Select(entry => entry.Weight).Order().ToArray();
+        Console.WriteLine(
+            $"{group.Key.Weapon,-30} {group.Key.Profile,-22} {weights.Length,8:N0} " +
+            $"{weights.Average(),9:F4} {Percentile(weights, 0.95),9:F4} {weights[^1],9:F4}");
+    }
+}
+
+// Prints the combat stats and full equipment list for one sampled extreme.
+static void PrintAttackSpeedBuild(AttackSpeedDiagnosticEntry entry)
+{
+    CharacterStats stats = entry.Loadout.Stats;
+    Console.WriteLine(
+        $"  {entry.Weight:F4} | {entry.Weapon.Name} | {entry.Loadout.AttackProfile.Name} | " +
+        $"AP {stats.AttackPower:F0} | WD {stats.WeaponDamage:F0} | " +
+        $"AS {stats[AttributeId.AttackSpeed]:P2} | Cycle damage {entry.CycleDamage:F1}");
+    Console.WriteLine($"    {entry.Loadout.Description}");
+}
+
+// Interpolates a percentile from sorted diagnostic weights.
+static double Percentile(double[] sortedValues, double percentile)
+{
+    double position = (sortedValues.Length - 1) * percentile;
+    int lower = (int)Math.Floor(position);
+    int upper = (int)Math.Ceiling(position);
+    if (lower == upper)
+        return sortedValues[lower];
+
+    double fraction = position - lower;
+    return sortedValues[lower] + (sortedValues[upper] - sortedValues[lower]) * fraction;
 }
 
 // Classifies relative variation using stable thresholds shared by all attributes.

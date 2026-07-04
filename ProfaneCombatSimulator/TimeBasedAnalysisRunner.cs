@@ -19,6 +19,7 @@ public static class TimeBasedAnalysisRunner
         double[] healthWeights = new double[fights];
         double[] weaponDamageWeights = new double[fights];
         double[] attackSpeedWeights = new double[fights];
+        AttackSpeedDiagnosticEntry[] attackSpeedDiagnostics = new AttackSpeedDiagnosticEntry[fights];
         WeightedLoadout?[] minimums = new WeightedLoadout?[3];
         WeightedLoadout?[] maximums = new WeightedLoadout?[3];
 
@@ -38,6 +39,14 @@ public static class TimeBasedAnalysisRunner
             healthWeights[index] = health;
             weaponDamageWeights[index] = weaponDamage;
             attackSpeedWeights[index] = attackSpeed;
+            double cycleDamage = playerA.AttackProfile.Steps.Sum(step =>
+                DamageCalculator.CalculateRawDamage(playerA.Stats, step, gameData.CombatConfig));
+            attackSpeedDiagnostics[index] = new AttackSpeedDiagnosticEntry
+            {
+                Weight = attackSpeed,
+                CycleDamage = cycleDamage,
+                Loadout = playerA
+            };
             UpdateExtremes(minimums, maximums, playerA, [health, weaponDamage, attackSpeed]);
 
             TimedCombatResult baseFight =
@@ -75,6 +84,7 @@ public static class TimeBasedAnalysisRunner
             AverageCompletedFightDuration = completedFights == 0 ? 0 : completedDurationTotal / completedFights,
             AttackSpeedValidationComparisons = fights,
             AttackSpeedOutcomeAgreements = outcomeAgreements,
+            AttackSpeedDiagnostics = attackSpeedDiagnostics,
             Health = CreateDistribution(
                 AttributeId.MaxHealth,
                 "Health",
