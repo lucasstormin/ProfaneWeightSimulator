@@ -45,7 +45,12 @@ while (true)
         TimeBasedAnalysisRunner.Analyze(gameData, fights, randomSeed, generationMode);
     PrintReport(result);
 
-    if (Console.IsInputRedirected || !HandlePostSimulationMenu(result))
+    if (Console.IsInputRedirected)
+        break;
+
+    bool runAgain = HandlePostSimulationMenu(result);
+    result = null!;
+    if (!runAgain)
         break;
 
     Console.WriteLine();
@@ -115,19 +120,15 @@ static void PrintDetails(AttributeWeightDistributionResult distribution)
 }
 
 // Prints the strongest sampled builds and their contextual Attack Speed values.
-static void PrintAttackSpeedDiagnostics(IReadOnlyList<AttackSpeedDiagnosticEntry> diagnostics)
+static void PrintAttackSpeedDiagnostics(
+    IReadOnlyList<AttackSpeedDiagnosticEntry> strongestBuilds,
+    IReadOnlyList<WeaponProfileDpsSummary> summaries)
 {
-    const int buildCount = 20;
-    AttackSpeedDiagnosticEntry[] strongest = diagnostics
-        .OrderByDescending(entry => entry.DamagePerSecond)
-        .Take(buildCount)
-        .ToArray();
-
     Console.WriteLine();
     Console.WriteLine("STRONGEST SAMPLED BASIC-ATTACK BUILDS");
     Console.WriteLine("======================================");
     Console.WriteLine("Ranked by sustained unmitigated DPS; AS weight is the value of the next +1% Attack Speed.");
-    foreach (AttackSpeedDiagnosticEntry entry in strongest)
+    foreach (AttackSpeedDiagnosticEntry entry in strongestBuilds)
         PrintAttackSpeedBuild(entry);
 
     Console.WriteLine();
@@ -135,16 +136,12 @@ static void PrintAttackSpeedDiagnostics(IReadOnlyList<AttackSpeedDiagnosticEntry
     Console.WriteLine("==========================");
     Console.WriteLine($"{"Weapon",-30} {"Profile",-22} {"Samples",8} {"Mean DPS",10} {"95th DPS",10} {"Max DPS",10} {"AS Weight",10}");
     Console.WriteLine(new string('-', 107));
-    foreach (IGrouping<(string Weapon, string Profile), AttackSpeedDiagnosticEntry> group in diagnostics
-        .GroupBy(entry => (entry.Weapon.Name, entry.Loadout.AttackProfile.Name))
-        .OrderByDescending(group => group.Max(entry => entry.DamagePerSecond)))
+    foreach (WeaponProfileDpsSummary summary in summaries)
     {
-        AttackSpeedDiagnosticEntry strongestForWeapon = group.MaxBy(entry => entry.DamagePerSecond)!;
-        double[] damagePerSecond = group.Select(entry => entry.DamagePerSecond).Order().ToArray();
         Console.WriteLine(
-            $"{group.Key.Weapon,-30} {group.Key.Profile,-22} {damagePerSecond.Length,8:N0} " +
-            $"{damagePerSecond.Average(),10:F2} {Percentile(damagePerSecond, 0.95),10:F2} " +
-            $"{damagePerSecond[^1],10:F2} {strongestForWeapon.Weight,10:F4}");
+            $"{summary.WeaponName,-30} {summary.ProfileName,-22} {summary.Samples,8:N0} " +
+            $"{summary.MeanDamagePerSecond,10:F2} {summary.NinetyFifthPercentileDamagePerSecond,10:F2} " +
+            $"{summary.MaximumDamagePerSecond,10:F2} {summary.AttackSpeedWeightAtMaximum,10:F4}");
     }
 }
 
@@ -160,19 +157,6 @@ static void PrintAttackSpeedBuild(AttackSpeedDiagnosticEntry entry)
     Console.WriteLine($"    {entry.Loadout.Description}");
 }
 
-// Interpolates a percentile from sorted diagnostic weights.
-static double Percentile(double[] sortedValues, double percentile)
-{
-    double position = (sortedValues.Length - 1) * percentile;
-    int lower = (int)Math.Floor(position);
-    int upper = (int)Math.Ceiling(position);
-    if (lower == upper)
-        return sortedValues[lower];
-
-    double fraction = position - lower;
-    return sortedValues[lower] + (sortedValues[upper] - sortedValues[lower]) * fraction;
-}
-
 // Classifies relative variation using stable thresholds shared by all attributes.
 static string ClassifyVariation(double coefficientOfVariationPercent)
 {
@@ -186,7 +170,7 @@ static string ClassifyVariation(double coefficientOfVariationPercent)
 // Reads a positive simulation count from an editable prefilled console field.
 static int ReadSimulationCount(int defaultValue)
 {
-    const int maximumFights = 1_000_000;
+    const int maximumFights = 5_000_000;
     if (Console.IsInputRedirected)
         return defaultValue;
 
@@ -278,7 +262,9 @@ static bool HandlePostSimulationMenu(SimulationAnalysisResult result)
         if (key.Key == ConsoleKey.D)
         {
             Console.WriteLine("D");
-            PrintAttackSpeedDiagnostics(result.AttackSpeedDiagnostics);
+            PrintAttackSpeedDiagnostics(
+                result.StrongestAttackSpeedBuilds,
+                result.WeaponProfileDpsSummaries);
             continue;
         }
         if (key.Key == ConsoleKey.R)

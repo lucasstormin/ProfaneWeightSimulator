@@ -16,7 +16,8 @@ public sealed class SimulationAnalysisResult
     public required AttributeWeightDistributionResult WeaponDamage { get; init; }
     public required AttributeWeightDistributionResult AttackSpeed { get; init; }
     public required AttributeWeightDistributionResult Armor { get; init; }
-    public required IReadOnlyList<AttackSpeedDiagnosticEntry> AttackSpeedDiagnostics { get; init; }
+    public required IReadOnlyList<AttackSpeedDiagnosticEntry> StrongestAttackSpeedBuilds { get; init; }
+    public required IReadOnlyList<WeaponProfileDpsSummary> WeaponProfileDpsSummaries { get; init; }
 
     public double AttackSpeedOutcomeAgreementRate =>
         AttackSpeedValidationComparisons == 0

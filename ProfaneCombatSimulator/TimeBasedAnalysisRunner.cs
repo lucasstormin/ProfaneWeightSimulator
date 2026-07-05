@@ -8,6 +8,7 @@ namespace CombatSimulator.Analysis;
 public static class TimeBasedAnalysisRunner
 {
     private const double AttackSpeedUnit = 0.01;
+    private const int RetainedStrongestBuilds = 20;
 
     // Runs weight sampling and deterministic combat validation with one reproducible seed.
     public static SimulationAnalysisResult Analyze(
@@ -24,7 +25,8 @@ public static class TimeBasedAnalysisRunner
         double[] weaponDamageWeights = new double[fights];
         double[] attackSpeedWeights = new double[fights];
         double[] armorWeights = new double[fights];
-        AttackSpeedDiagnosticEntry[] attackSpeedDiagnostics = new AttackSpeedDiagnosticEntry[fights];
+        List<AttackSpeedDiagnosticEntry> strongestBuilds = new(RetainedStrongestBuilds);
+        Dictionary<(string Weapon, string Profile), DpsAccumulator> dpsAccumulators = [];
         WeightedLoadout?[] minimums = new WeightedLoadout?[4];
         WeightedLoadout?[] maximums = new WeightedLoadout?[4];
 
@@ -50,13 +52,15 @@ public static class TimeBasedAnalysisRunner
                 DamageCalculator.CalculateRawDamage(playerA.Stats, step, gameData.CombatConfig));
             double baseCycleDuration = playerA.AttackProfile.Steps.Sum(step => step.TotalDuration);
             double speedFactor = 1 + playerA.Stats[AttributeId.AttackSpeed];
-            attackSpeedDiagnostics[index] = new AttackSpeedDiagnosticEntry
+            AttackSpeedDiagnosticEntry diagnostic = new()
             {
                 Weight = attackSpeed,
                 CycleDamage = cycleDamage,
                 DamagePerSecond = cycleDamage * speedFactor / baseCycleDuration,
                 Loadout = playerA
             };
+            RetainStrongestBuild(strongestBuilds, diagnostic);
+            AddDpsSample(dpsAccumulators, diagnostic);
             UpdateExtremes(minimums, maximums, playerA, [health, weaponDamage, attackSpeed, armor]);
 
             TimedCombatResult baseFight =
@@ -107,7 +111,10 @@ public static class TimeBasedAnalysisRunner
             AttackSpeedOutcomeAgreements = outcomeAgreements,
             ArmorValidationComparisons = fights,
             ArmorOutcomeAgreements = armorOutcomeAgreements,
-            AttackSpeedDiagnostics = attackSpeedDiagnostics,
+            StrongestAttackSpeedBuilds = strongestBuilds
+                .OrderByDescending(entry => entry.DamagePerSecond)
+                .ToArray(),
+            WeaponProfileDpsSummaries = CreateDpsSummaries(dpsAccumulators),
             Health = CreateDistribution(
                 AttributeId.MaxHealth,
                 "Health",
@@ -137,6 +144,53 @@ public static class TimeBasedAnalysisRunner
                 minimums[3]!,
                 maximums[3]!)
         };
+    }
+
+    // Retains only the highest-DPS builds needed by the interactive diagnostic.
+    private static void RetainStrongestBuild(
+        List<AttackSpeedDiagnosticEntry> strongestBuilds,
+        AttackSpeedDiagnosticEntry candidate)
+    {
+        if (strongestBuilds.Count < RetainedStrongestBuilds)
+        {
+            strongestBuilds.Add(candidate);
+            return;
+        }
+
+        int weakestIndex = 0;
+        for (int index = 1; index < strongestBuilds.Count; index++)
+        {
+            if (strongestBuilds[index].DamagePerSecond < strongestBuilds[weakestIndex].DamagePerSecond)
+                weakestIndex = index;
+        }
+
+        if (candidate.DamagePerSecond > strongestBuilds[weakestIndex].DamagePerSecond)
+            strongestBuilds[weakestIndex] = candidate;
+    }
+
+    // Adds one compact DPS value to its weapon/profile aggregate.
+    private static void AddDpsSample(
+        Dictionary<(string Weapon, string Profile), DpsAccumulator> accumulators,
+        AttackSpeedDiagnosticEntry diagnostic)
+    {
+        var key = (diagnostic.Weapon.Name, diagnostic.Loadout.AttackProfile.Name);
+        if (!accumulators.TryGetValue(key, out DpsAccumulator? accumulator))
+        {
+            accumulator = new DpsAccumulator();
+            accumulators.Add(key, accumulator);
+        }
+
+        accumulator.Add(diagnostic.DamagePerSecond, diagnostic.Weight);
+    }
+
+    // Finalizes exact mean, percentile, maximum, and contextual weight diagnostics.
+    private static IReadOnlyList<WeaponProfileDpsSummary> CreateDpsSummaries(
+        Dictionary<(string Weapon, string Profile), DpsAccumulator> accumulators)
+    {
+        return accumulators
+            .Select(entry => entry.Value.CreateSummary(entry.Key.Weapon, entry.Key.Profile))
+            .OrderByDescending(summary => summary.MaximumDamagePerSecond)
+            .ToArray();
     }
 
     // Derives smooth marginal weights from one profile's complete three-hit damage cycle.
@@ -246,5 +300,40 @@ public static class TimeBasedAnalysisRunner
 
         double fraction = position - lower;
         return sortedValues[lower] + (sortedValues[upper] - sortedValues[lower]) * fraction;
+    }
+
+    // Accumulates compact DPS samples without retaining their complete loadouts.
+    private sealed class DpsAccumulator
+    {
+        private readonly List<double> values = [];
+        private double maximum = double.NegativeInfinity;
+        private double attackSpeedWeightAtMaximum;
+
+        // Records one DPS sample and the Attack Speed weight attached to a new maximum.
+        public void Add(double damagePerSecond, double attackSpeedWeight)
+        {
+            values.Add(damagePerSecond);
+            if (damagePerSecond > maximum)
+            {
+                maximum = damagePerSecond;
+                attackSpeedWeightAtMaximum = attackSpeedWeight;
+            }
+        }
+
+        // Sorts retained numeric values and produces the immutable report summary.
+        public WeaponProfileDpsSummary CreateSummary(string weaponName, string profileName)
+        {
+            double[] sortedValues = values.Order().ToArray();
+            return new WeaponProfileDpsSummary
+            {
+                WeaponName = weaponName,
+                ProfileName = profileName,
+                Samples = sortedValues.Length,
+                MeanDamagePerSecond = sortedValues.Average(),
+                NinetyFifthPercentileDamagePerSecond = Percentile(sortedValues, 0.95),
+                MaximumDamagePerSecond = sortedValues[^1],
+                AttackSpeedWeightAtMaximum = attackSpeedWeightAtMaximum
+            };
+        }
     }
 }

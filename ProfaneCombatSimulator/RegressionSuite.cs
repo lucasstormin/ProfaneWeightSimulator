@@ -237,10 +237,15 @@ public static class RegressionSuite
         AssertClose(first.AttackSpeed.MedianWeight, second.AttackSpeed.MedianWeight);
         AssertClose(first.AverageCompletedFightDuration, second.AverageCompletedFightDuration);
         AssertClose(
-            first.AttackSpeedDiagnostics.Max(entry => entry.DamagePerSecond),
-            second.AttackSpeedDiagnostics.Max(entry => entry.DamagePerSecond));
-        if (first.AttackSpeedDiagnostics.Any(entry => entry.DamagePerSecond <= 0))
+            first.StrongestAttackSpeedBuilds.Max(entry => entry.DamagePerSecond),
+            second.StrongestAttackSpeedBuilds.Max(entry => entry.DamagePerSecond));
+        if (first.StrongestAttackSpeedBuilds.Any(entry => entry.DamagePerSecond <= 0))
             throw new Exception("A diagnostic build produced non-positive DPS.");
+        if (first.StrongestAttackSpeedBuilds.Count != 20 ||
+            first.WeaponProfileDpsSummaries.Sum(summary => summary.Samples) != 100)
+        {
+            throw new Exception("Compact diagnostics retained an unexpected sample count.");
+        }
         if (first.Stalemates != second.Stalemates)
             throw new Exception("Seeded stalemate counts differ.");
         if (first.Draws != second.Draws)
