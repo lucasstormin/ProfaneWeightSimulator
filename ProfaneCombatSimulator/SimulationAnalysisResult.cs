@@ -8,6 +8,8 @@ public sealed class SimulationAnalysisResult
     public required int Stalemates { get; init; }
     public required int Draws { get; init; }
     public required double AverageCompletedFightDuration { get; init; }
+    public required double ShortestCompletedFightDuration { get; init; }
+    public required double LongestCompletedFightDuration { get; init; }
     public required int AttackSpeedValidationComparisons { get; init; }
     public required int AttackSpeedOutcomeAgreements { get; init; }
     public required int ArmorValidationComparisons { get; init; }
@@ -18,6 +20,10 @@ public sealed class SimulationAnalysisResult
     public required int CriticalChanceOutcomeAgreements { get; init; }
     public required int CriticalDamageValidationComparisons { get; init; }
     public required int CriticalDamageOutcomeAgreements { get; init; }
+    public required int HealthRegenValidationComparisons { get; init; }
+    public required int HealthRegenOutcomeAgreements { get; init; }
+    public required int LifeStealValidationComparisons { get; init; }
+    public required int LifeStealOutcomeAgreements { get; init; }
     public required AttributeWeightDistributionResult Health { get; init; }
     public required AttributeWeightDistributionResult WeaponDamage { get; init; }
     public required AttributeWeightDistributionResult AttackSpeed { get; init; }
@@ -25,8 +31,13 @@ public sealed class SimulationAnalysisResult
     public required AttributeWeightDistributionResult ArmorPenetration { get; init; }
     public required AttributeWeightDistributionResult CriticalChance { get; init; }
     public required AttributeWeightDistributionResult CriticalDamage { get; init; }
+    public required AttributeWeightDistributionResult HealthRegen { get; init; }
+    public required AttributeWeightDistributionResult LifeSteal { get; init; }
     public required IReadOnlyList<AttackSpeedDiagnosticEntry> StrongestAttackSpeedBuilds { get; init; }
     public required IReadOnlyList<WeaponProfileDpsSummary> WeaponProfileDpsSummaries { get; init; }
+    public required FightDiagnosticEntry? ShortestFight { get; init; }
+    public required FightDiagnosticEntry? LongestFight { get; init; }
+    public required FightDiagnosticEntry MaximumHealthRegenWeightFight { get; init; }
 
     public double AttackSpeedOutcomeAgreementRate =>
         AttackSpeedValidationComparisons == 0
@@ -55,4 +66,16 @@ public sealed class SimulationAnalysisResult
             ? 0
             : (double)CriticalDamageOutcomeAgreements /
                 CriticalDamageValidationComparisons * 100;
+
+    public double HealthRegenOutcomeAgreementRate =>
+        HealthRegenValidationComparisons == 0
+            ? 0
+            : (double)HealthRegenOutcomeAgreements /
+                HealthRegenValidationComparisons * 100;
+
+    public double LifeStealOutcomeAgreementRate =>
+        LifeStealValidationComparisons == 0
+            ? 0
+            : (double)LifeStealOutcomeAgreements /
+                LifeStealValidationComparisons * 100;
 }

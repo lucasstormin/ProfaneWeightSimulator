@@ -71,11 +71,15 @@ static void PrintReport(SimulationAnalysisResult result)
     PrintSummaryRow(result.ArmorPenetration);
     PrintSummaryRow(result.CriticalChance);
     PrintSummaryRow(result.CriticalDamage);
+    PrintSummaryRow(result.HealthRegen);
+    PrintSummaryRow(result.LifeSteal);
     Console.WriteLine();
 
     Console.WriteLine("TIME-BASED VALIDATION");
     Console.WriteLine("=====================");
     Console.WriteLine($"Average fight duration: {result.AverageCompletedFightDuration:F2} seconds");
+    Console.WriteLine($"Shortest fight duration: {result.ShortestCompletedFightDuration:F2} seconds");
+    Console.WriteLine($"Longest fight duration: {result.LongestCompletedFightDuration:F2} seconds");
     Console.WriteLine($"Stalemates: {result.Stalemates:N0} of {result.SimulatedFights:N0} fights");
     if (result.Draws > 0)
         Console.WriteLine($"Draws: {result.Draws:N0} of {result.SimulatedFights:N0} fights");
@@ -87,6 +91,8 @@ static void PrintReport(SimulationAnalysisResult result)
     Console.WriteLine(
         $"Critical Damage/AP outcome agreement: {result.CriticalDamageOutcomeAgreementRate:F2}% " +
         $"({result.CriticalDamageValidationComparisons:N0} eligible fights)");
+    Console.WriteLine($"Health Regen/AP outcome agreement: {result.HealthRegenOutcomeAgreementRate:F2}%");
+    Console.WriteLine($"Life Steal/AP outcome agreement: {result.LifeStealOutcomeAgreementRate:F2}%");
     Console.WriteLine("Formula/profile validation: Passed");
     Console.WriteLine("Timing simulation: Passed");
     Console.WriteLine();
@@ -100,6 +106,8 @@ static void PrintReport(SimulationAnalysisResult result)
     PrintDetails(result.ArmorPenetration);
     PrintDetails(result.CriticalChance);
     PrintDetails(result.CriticalDamage);
+    PrintDetails(result.HealthRegen);
+    PrintDetails(result.LifeSteal);
     Console.WriteLine();
 
     Console.WriteLine("LEGEND");
@@ -113,6 +121,8 @@ static void PrintReport(SimulationAnalysisResult result)
     Console.WriteLine("Armor Penetration/AP agreement: Fights where +1 percentage point and its calculated AP equivalent had the same outcome.");
     Console.WriteLine("Critical Chance/AP agreement: Fights where +1 percentage point and its calculated AP equivalent had the same outcome.");
     Console.WriteLine("Critical Damage/AP agreement: Fights where +1 percentage point and its calculated AP equivalent had the same outcome.");
+    Console.WriteLine("Health Regen/AP agreement: Fights where +1 HP/second and its calculated AP equivalent had the same outcome.");
+    Console.WriteLine("Life Steal/AP agreement: Fights where +1 percentage point and its calculated AP equivalent had the same outcome.");
     Console.WriteLine("* Critical Damage uses only builds with at least 10% Critical Chance.");
 }
 
@@ -135,15 +145,13 @@ static void PrintDetails(AttributeWeightDistributionResult distribution)
 }
 
 // Prints the strongest sampled builds and their contextual Attack Speed values.
-static void PrintAttackSpeedDiagnostics(
-    IReadOnlyList<AttackSpeedDiagnosticEntry> strongestBuilds,
-    IReadOnlyList<WeaponProfileDpsSummary> summaries)
+static void PrintDiagnostics(SimulationAnalysisResult analysis)
 {
     Console.WriteLine();
     Console.WriteLine("STRONGEST SAMPLED BASIC-ATTACK BUILDS");
     Console.WriteLine("======================================");
     Console.WriteLine("Ranked by sustained unmitigated DPS; AS weight is the value of the next +1% Attack Speed.");
-    foreach (AttackSpeedDiagnosticEntry entry in strongestBuilds)
+    foreach (AttackSpeedDiagnosticEntry entry in analysis.StrongestAttackSpeedBuilds)
         PrintAttackSpeedBuild(entry);
 
     Console.WriteLine();
@@ -151,13 +159,77 @@ static void PrintAttackSpeedDiagnostics(
     Console.WriteLine("==========================");
     Console.WriteLine($"{"Weapon",-30} {"Profile",-22} {"Samples",8} {"Mean DPS",10} {"95th DPS",10} {"Max DPS",10} {"AS Weight",10}");
     Console.WriteLine(new string('-', 107));
-    foreach (WeaponProfileDpsSummary summary in summaries)
+    foreach (WeaponProfileDpsSummary summary in analysis.WeaponProfileDpsSummaries)
     {
         Console.WriteLine(
             $"{summary.WeaponName,-30} {summary.ProfileName,-22} {summary.Samples,8:N0} " +
             $"{summary.MeanDamagePerSecond,10:F2} {summary.NinetyFifthPercentileDamagePerSecond,10:F2} " +
             $"{summary.MaximumDamagePerSecond,10:F2} {summary.AttackSpeedWeightAtMaximum,10:F4}");
     }
+
+    if (analysis.ShortestFight is not null)
+        PrintFightDiagnostic("SHORTEST COMPLETED FIGHT", analysis.ShortestFight, includeRegenContext: false);
+    if (analysis.LongestFight is not null)
+        PrintFightDiagnostic("LONGEST COMPLETED FIGHT", analysis.LongestFight, includeRegenContext: false);
+    PrintFightDiagnostic(
+        "MAXIMUM HEALTH REGEN WEIGHT",
+        analysis.MaximumHealthRegenWeightFight,
+        includeRegenContext: true);
+}
+
+// Prints both complete builds and timing details for one notable fight.
+static void PrintFightDiagnostic(
+    string title,
+    FightDiagnosticEntry diagnostic,
+    bool includeRegenContext)
+{
+    Console.WriteLine();
+    Console.WriteLine(title);
+    Console.WriteLine(new string('=', title.Length));
+    Console.WriteLine(
+        $"Duration: {diagnostic.Fight.Duration:F2} seconds | " +
+        $"Outcome: {diagnostic.Fight.Outcome}");
+    if (includeRegenContext)
+    {
+        Console.WriteLine(
+            $"HP/s weight: {diagnostic.HealthRegenWeight:F4} | " +
+            $"Useful baseline ticks: {diagnostic.Fight.PlayerAAdditionalRegenHealingOpportunity:F0} | " +
+            $"Health weight: {diagnostic.HealthWeight:F4} | " +
+            $"Existing HP/s: {diagnostic.PlayerA.Stats[AttributeId.HealthRegen]:F0}");
+    }
+
+    PrintFightBuild(
+        "Player A",
+        diagnostic.PlayerA,
+        diagnostic.Fight.PlayerARemainingHealth,
+        diagnostic.Fight.PlayerAHits,
+        diagnostic.Fight.PlayerATotalHealing);
+    PrintFightBuild(
+        "Player B",
+        diagnostic.PlayerB,
+        diagnostic.Fight.PlayerBRemainingHealth,
+        diagnostic.Fight.PlayerBHits,
+        diagnostic.Fight.PlayerBTotalHealing);
+}
+
+// Prints combat-relevant stats and every equipped item for one diagnostic player.
+static void PrintFightBuild(
+    string label,
+    Loadout loadout,
+    double remainingHealth,
+    int hits,
+    double totalHealing)
+{
+    CharacterStats stats = loadout.Stats;
+    Console.WriteLine(
+        $"{label}: AP {stats.AttackPower:F0} | Health {stats.MaxHealth:F0} | " +
+        $"Armor {stats[AttributeId.Armor]:F0} | WD {stats.WeaponDamage:F0} | " +
+        $"AS {stats[AttributeId.AttackSpeed]:P1} | CC {stats[AttributeId.CriticalChance]:P1} | " +
+        $"CD {stats[AttributeId.CriticalDamage]:P1} | HP/s {stats[AttributeId.HealthRegen]:F0} | " +
+        $"LS {stats[AttributeId.LifeSteal]:P1}");
+    Console.WriteLine(
+        $"  Remaining Health {remainingHealth:F0} | Hits {hits:N0} | Healed {totalHealing:F0}");
+    Console.WriteLine($"  {loadout.Description}");
 }
 
 // Prints the combat stats and full equipment list for one sampled extreme.
@@ -277,9 +349,7 @@ static bool HandlePostSimulationMenu(SimulationAnalysisResult result)
         if (key.Key == ConsoleKey.D)
         {
             Console.WriteLine("D");
-            PrintAttackSpeedDiagnostics(
-                result.StrongestAttackSpeedBuilds,
-                result.WeaponProfileDpsSummaries);
+            PrintDiagnostics(result);
             continue;
         }
         if (key.Key == ConsoleKey.R)

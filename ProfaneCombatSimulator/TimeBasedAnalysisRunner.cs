@@ -11,6 +11,8 @@ public static class TimeBasedAnalysisRunner
     private const double ArmorPenetrationUnit = 0.01;
     private const double CriticalChanceUnit = 0.01;
     private const double CriticalDamageUnit = 0.01;
+    private const double HealthRegenUnit = 1;
+    private const double LifeStealUnit = 0.01;
     public const double CriticalDamageMinimumChance = 0.10;
     private const int RetainedStrongestBuilds = 20;
 
@@ -32,20 +34,29 @@ public static class TimeBasedAnalysisRunner
         double[] armorPenetrationWeights = new double[fights];
         double[] criticalChanceWeights = new double[fights];
         List<double> criticalDamageWeights = new(fights);
+        double[] healthRegenWeights = new double[fights];
+        double[] lifeStealWeights = new double[fights];
         List<AttackSpeedDiagnosticEntry> strongestBuilds = new(RetainedStrongestBuilds);
         Dictionary<(string Weapon, string Profile), DpsAccumulator> dpsAccumulators = [];
-        WeightedLoadout?[] minimums = new WeightedLoadout?[7];
-        WeightedLoadout?[] maximums = new WeightedLoadout?[7];
+        WeightedLoadout?[] minimums = new WeightedLoadout?[9];
+        WeightedLoadout?[] maximums = new WeightedLoadout?[9];
 
         int stalemates = 0;
         int draws = 0;
         int completedFights = 0;
         double completedDurationTotal = 0;
+        double shortestCompletedFight = double.PositiveInfinity;
+        double longestCompletedFight = 0;
+        FightDiagnosticEntry? shortestFightDiagnostic = null;
+        FightDiagnosticEntry? longestFightDiagnostic = null;
+        FightDiagnosticEntry? maximumHealthRegenDiagnostic = null;
         int outcomeAgreements = 0;
         int armorOutcomeAgreements = 0;
         int armorPenetrationOutcomeAgreements = 0;
         int criticalChanceOutcomeAgreements = 0;
         int criticalDamageOutcomeAgreements = 0;
+        int healthRegenOutcomeAgreements = 0;
+        int lifeStealOutcomeAgreements = 0;
 
         for (int index = 0; index < fights; index++)
         {
@@ -135,9 +146,99 @@ public static class TimeBasedAnalysisRunner
             {
                 completedFights++;
                 completedDurationTotal += baseFight.Duration;
+                if (baseFight.Duration < shortestCompletedFight)
+                {
+                    shortestCompletedFight = baseFight.Duration;
+                    shortestFightDiagnostic = new FightDiagnosticEntry
+                    {
+                        PlayerA = playerA,
+                        PlayerB = playerB,
+                        Fight = baseFight
+                    };
+                }
+                if (baseFight.Duration > longestCompletedFight)
+                {
+                    longestCompletedFight = baseFight.Duration;
+                    longestFightDiagnostic = new FightDiagnosticEntry
+                    {
+                        PlayerA = playerA,
+                        PlayerB = playerB,
+                        Fight = baseFight
+                    };
+                }
                 if (baseFight.Outcome == CombatOutcome.Draw)
                     draws++;
             }
+
+            Loadout healthRegenBuffed = WithAddedStat(
+                playerA,
+                AttributeId.HealthRegen,
+                HealthRegenUnit);
+            TimedCombatResult healthRegenFight = TimeBasedCombatSimulator.Simulate(
+                healthRegenBuffed,
+                playerB,
+                gameData.CombatConfig,
+                randomSeed: combatSeed);
+            double healthRegenWeight =
+                baseFight.PlayerAAdditionalRegenHealingOpportunity * health;
+            healthRegenWeights[index] = healthRegenWeight;
+            if (minimums[7] is null || healthRegenWeight < minimums[7]!.Weight)
+                minimums[7] = new WeightedLoadout { Loadout = playerA, Weight = healthRegenWeight };
+            if (maximums[7] is null || healthRegenWeight > maximums[7]!.Weight)
+            {
+                maximums[7] = new WeightedLoadout { Loadout = playerA, Weight = healthRegenWeight };
+                maximumHealthRegenDiagnostic = new FightDiagnosticEntry
+                {
+                    PlayerA = playerA,
+                    PlayerB = playerB,
+                    Fight = baseFight,
+                    HealthWeight = health,
+                    HealthRegenWeight = healthRegenWeight
+                };
+            }
+
+            Loadout healthRegenEquivalentAttackPower = WithAddedStat(
+                playerA,
+                AttributeId.AttackPower,
+                healthRegenWeight);
+            CombatOutcome healthRegenAttackPowerOutcome = TimeBasedCombatSimulator
+                .Simulate(
+                    healthRegenEquivalentAttackPower,
+                    playerB,
+                    gameData.CombatConfig,
+                    randomSeed: combatSeed)
+                .Outcome;
+            if (healthRegenFight.Outcome == healthRegenAttackPowerOutcome)
+                healthRegenOutcomeAgreements++;
+
+            double lifeStealWeight =
+                baseFight.PlayerAAdditionalLifeStealHealingOpportunity * health;
+            lifeStealWeights[index] = lifeStealWeight;
+            if (minimums[8] is null || lifeStealWeight < minimums[8]!.Weight)
+                minimums[8] = new WeightedLoadout { Loadout = playerA, Weight = lifeStealWeight };
+            if (maximums[8] is null || lifeStealWeight > maximums[8]!.Weight)
+                maximums[8] = new WeightedLoadout { Loadout = playerA, Weight = lifeStealWeight };
+
+            Loadout lifeStealBuffed = WithAddedStat(
+                playerA,
+                AttributeId.LifeSteal,
+                LifeStealUnit);
+            CombatOutcome lifeStealOutcome = TimeBasedCombatSimulator
+                .Simulate(lifeStealBuffed, playerB, gameData.CombatConfig, randomSeed: combatSeed)
+                .Outcome;
+            Loadout lifeStealEquivalentAttackPower = WithAddedStat(
+                playerA,
+                AttributeId.AttackPower,
+                lifeStealWeight);
+            CombatOutcome lifeStealAttackPowerOutcome = TimeBasedCombatSimulator
+                .Simulate(
+                    lifeStealEquivalentAttackPower,
+                    playerB,
+                    gameData.CombatConfig,
+                    randomSeed: combatSeed)
+                .Outcome;
+            if (lifeStealOutcome == lifeStealAttackPowerOutcome)
+                lifeStealOutcomeAgreements++;
 
             Loadout attackSpeedBuffed = WithAddedStat(playerA, AttributeId.AttackSpeed, AttackSpeedUnit);
             Loadout attackPowerBuffed = WithAddedStat(playerA, AttributeId.AttackPower, attackSpeed);
@@ -245,6 +346,8 @@ public static class TimeBasedAnalysisRunner
             Stalemates = stalemates,
             Draws = draws,
             AverageCompletedFightDuration = completedFights == 0 ? 0 : completedDurationTotal / completedFights,
+            ShortestCompletedFightDuration = completedFights == 0 ? 0 : shortestCompletedFight,
+            LongestCompletedFightDuration = completedFights == 0 ? 0 : longestCompletedFight,
             AttackSpeedValidationComparisons = fights,
             AttackSpeedOutcomeAgreements = outcomeAgreements,
             ArmorValidationComparisons = fights,
@@ -255,10 +358,17 @@ public static class TimeBasedAnalysisRunner
             CriticalChanceOutcomeAgreements = criticalChanceOutcomeAgreements,
             CriticalDamageValidationComparisons = criticalDamageWeights.Count,
             CriticalDamageOutcomeAgreements = criticalDamageOutcomeAgreements,
+            HealthRegenValidationComparisons = fights,
+            HealthRegenOutcomeAgreements = healthRegenOutcomeAgreements,
+            LifeStealValidationComparisons = fights,
+            LifeStealOutcomeAgreements = lifeStealOutcomeAgreements,
             StrongestAttackSpeedBuilds = strongestBuilds
                 .OrderByDescending(entry => entry.DamagePerSecond)
                 .ToArray(),
             WeaponProfileDpsSummaries = CreateDpsSummaries(dpsAccumulators),
+            ShortestFight = shortestFightDiagnostic,
+            LongestFight = longestFightDiagnostic,
+            MaximumHealthRegenWeightFight = maximumHealthRegenDiagnostic!,
             Health = CreateDistribution(
                 AttributeId.MaxHealth,
                 "Health",
@@ -307,7 +417,21 @@ public static class TimeBasedAnalysisRunner
                 "1 percentage point",
                 criticalDamageWeights.ToArray(),
                 minimums[6]!,
-                maximums[6]!)
+                maximums[6]!),
+            HealthRegen = CreateDistribution(
+                AttributeId.HealthRegen,
+                "Health Regen (1 HP/s)",
+                "1 Health per second",
+                healthRegenWeights,
+                minimums[7]!,
+                maximums[7]!),
+            LifeSteal = CreateDistribution(
+                AttributeId.LifeSteal,
+                "Life Steal (1%)",
+                "1 percentage point",
+                lifeStealWeights,
+                minimums[8]!,
+                maximums[8]!)
         };
     }
 

@@ -30,13 +30,64 @@ public sealed class CombatantState
     public double NextContactTime { get; private set; }
     public int ComboIndex { get; private set; }
     public int HitsLanded { get; private set; }
+    public double TotalHealing { get; private set; }
+    public double AdditionalRegenHealingOpportunity { get; private set; }
+    public double AdditionalLifeStealHealingOpportunity { get; private set; }
     public bool IsAlive => CurrentHealth > 0;
     public AttackStep CurrentStep => Profile.Steps[ComboIndex];
 
-    // Applies one contact's damage while preventing negative remaining Health.
+    // Applies one contact's full damage while preserving overkill for pre-death Life Steal.
     public void ReceiveDamage(double damage)
     {
-        CurrentHealth = Math.Max(0, CurrentHealth - damage);
+        CurrentHealth -= damage;
+    }
+
+    // Applies truncated final-damage Life Steal and tracks the useful gain from one extra percent.
+    public void ApplyLifeSteal(double dealtDamage)
+    {
+        double lifeSteal = Stats[AttributeId.LifeSteal];
+        if (dealtDamage <= 0 || lifeSteal <= 0 && lifeSteal + 0.01 <= 0 ||
+            CurrentHealth >= Stats.MaxHealth)
+        {
+            return;
+        }
+
+        int integerDamage = (int)dealtDamage;
+        double baseHealing = lifeSteal <= 0
+            ? 0
+            : (int)(integerDamage * (float)lifeSteal);
+        double increasedHealing = (int)(integerDamage * (float)Math.Max(0, lifeSteal + 0.01));
+        baseHealing = Math.Min(baseHealing, Stats.MaxHealth - CurrentHealth);
+        increasedHealing = Math.Min(increasedHealing, Stats.MaxHealth - CurrentHealth);
+        if (CurrentHealth + baseHealing > 0)
+        {
+            AdditionalLifeStealHealingOpportunity +=
+                Math.Max(0, increasedHealing - baseHealing);
+        }
+        CurrentHealth += baseHealing;
+        TotalHealing += baseHealing;
+    }
+
+    // Applies one ceiling-rounded regeneration tick without exceeding maximum Health.
+    public void Regenerate()
+    {
+        double regeneration = Stats[AttributeId.HealthRegen];
+        if (!IsAlive || CurrentHealth >= Stats.MaxHealth)
+            return;
+
+        double missingHealth = Stats.MaxHealth - CurrentHealth;
+        double baseHealing = regeneration <= 0
+            ? 0
+            : Math.Min(Math.Ceiling(regeneration), missingHealth);
+        double increasedRegeneration = regeneration + 1;
+        double increasedHealing = increasedRegeneration <= 0
+            ? 0
+            : Math.Min(Math.Ceiling(increasedRegeneration), missingHealth);
+        AdditionalRegenHealingOpportunity += Math.Max(0, increasedHealing - baseHealing);
+
+        double healing = baseHealing;
+        CurrentHealth += healing;
+        TotalHealing += healing;
     }
 
     // Records a landed hit and schedules the next attack's contact in combo order.

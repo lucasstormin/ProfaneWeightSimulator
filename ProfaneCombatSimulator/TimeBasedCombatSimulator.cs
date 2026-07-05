@@ -28,15 +28,19 @@ public static class TimeBasedCombatSimulator
         CombatantState stateB = new(playerB);
         Random playerACriticalRolls = new(randomSeed);
         Random playerBCriticalRolls = new(unchecked(randomSeed ^ (int)0x9E3779B9));
+        double nextRegenerationTime = 1;
 
         for (int eventCount = 0; eventCount < maximumEvents; eventCount++)
         {
-            double eventTime = Math.Min(stateA.NextContactTime, stateB.NextContactTime);
+            double eventTime = Math.Min(
+                nextRegenerationTime,
+                Math.Min(stateA.NextContactTime, stateB.NextContactTime));
             if (eventTime > maximumDuration + TimeEpsilon)
                 return CreateStalemate(stateA, stateB, maximumDuration, CombatTerminationReason.TimeLimit);
 
             bool playerAHits = TimesMatch(stateA.NextContactTime, eventTime);
             bool playerBHits = TimesMatch(stateB.NextContactTime, eventTime);
+            bool regenerationTicks = TimesMatch(nextRegenerationTime, eventTime);
 
             double damageToB = playerAHits
                 ? DamageCalculator.CalculateDamage(
@@ -70,11 +74,25 @@ public static class TimeBasedCombatSimulator
                 stateB.AdvanceAfterContact();
             }
 
+            if (playerAHits)
+                stateA.ApplyLifeSteal(damageToB);
+            if (playerBHits)
+                stateB.ApplyLifeSteal(damageToA);
+
             if (!stateA.IsAlive || !stateB.IsAlive)
                 return CreateDeathResult(stateA, stateB, eventTime);
+
+            if (regenerationTicks)
+            {
+                stateA.Regenerate();
+                stateB.Regenerate();
+                nextRegenerationTime++;
+            }
         }
 
-        double duration = Math.Min(maximumDuration, Math.Min(stateA.NextContactTime, stateB.NextContactTime));
+        double duration = Math.Min(
+            maximumDuration,
+            Math.Min(nextRegenerationTime, Math.Min(stateA.NextContactTime, stateB.NextContactTime)));
         return CreateStalemate(stateA, stateB, duration, CombatTerminationReason.EventLimit);
     }
 
@@ -121,7 +139,13 @@ public static class TimeBasedCombatSimulator
             PlayerAHits = stateA.HitsLanded,
             PlayerBHits = stateB.HitsLanded,
             PlayerARemainingHealth = stateA.CurrentHealth,
-            PlayerBRemainingHealth = stateB.CurrentHealth
+            PlayerBRemainingHealth = stateB.CurrentHealth,
+            PlayerATotalHealing = stateA.TotalHealing,
+            PlayerBTotalHealing = stateB.TotalHealing,
+            PlayerAAdditionalRegenHealingOpportunity = stateA.AdditionalRegenHealingOpportunity,
+            PlayerBAdditionalRegenHealingOpportunity = stateB.AdditionalRegenHealingOpportunity,
+            PlayerAAdditionalLifeStealHealingOpportunity = stateA.AdditionalLifeStealHealingOpportunity,
+            PlayerBAdditionalLifeStealHealingOpportunity = stateB.AdditionalLifeStealHealingOpportunity
         };
     }
 

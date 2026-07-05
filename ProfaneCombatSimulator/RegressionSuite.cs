@@ -21,6 +21,8 @@ public static class RegressionSuite
         RunCheck("Combo order repeats 1-2-3", TestComboOrder);
         RunCheck("Simultaneous lethal contacts draw", TestSimultaneousDraw);
         RunCheck("Time limit produces a stalemate", TestStalemate);
+        RunCheck("Health regeneration ticks after damage and cannot revive", TestHealthRegeneration);
+        RunCheck("Life Steal resolves after simultaneous overkill damage", TestLifeSteal);
         RunCheck("Profile-aware weights use one-percent Attack Speed units", TestContextualWeights);
         RunCheck("Seeded time-based analysis is deterministic", TestDeterministicAnalysis);
         Console.WriteLine("All regression checks passed.");
@@ -237,6 +239,85 @@ public static class RegressionSuite
         AssertClose(3, result.Duration);
     }
 
+    // Confirms one-second ceiling-rounded ticks follow damage and never revive lethal targets.
+    private static void TestHealthRegeneration()
+    {
+        WeaponAttackProfile profile = CreateProfile();
+        Loadout regenerating = NewLoadout(
+            "Regenerating",
+            BuildStats(0, 100, 0, healthRegen: 10.1),
+            profile);
+        Loadout damaging = NewLoadout("Damaging", BuildStats(0, 100, 20), profile);
+        TimedCombatResult tickResult = TimeBasedCombatSimulator.Simulate(
+            regenerating,
+            damaging,
+            DefaultConfig(),
+            maximumDuration: 1);
+        AssertClose(91, tickResult.PlayerARemainingHealth);
+        AssertClose(11, tickResult.PlayerATotalHealing);
+        AssertClose(1, tickResult.PlayerAAdditionalRegenHealingOpportunity);
+
+        WeaponAttackProfile lethalAtOneSecond = new()
+        {
+            Name = "Lethal at one second",
+            Steps =
+            [
+                NewStep(1, 1, 0.1, 0.4, 1),
+                NewStep(2, 1, 0.1, 0.4, 1),
+                NewStep(3, 1, 0.1, 0.4, 1)
+            ]
+        };
+        Loadout doomed = NewLoadout(
+            "Doomed",
+            BuildStats(0, 50, 0, healthRegen: 100),
+            lethalAtOneSecond);
+        Loadout lethal = NewLoadout(
+            "Lethal",
+            BuildStats(0, 100, 100),
+            lethalAtOneSecond);
+        TimedCombatResult lethalResult = TimeBasedCombatSimulator.Simulate(
+            doomed,
+            lethal,
+            DefaultConfig());
+        if (lethalResult.Outcome != CombatOutcome.PlayerBWins)
+            throw new Exception("Lethal damage did not end combat before regeneration.");
+        AssertClose(0, lethalResult.PlayerATotalHealing);
+        AssertClose(0, lethalResult.PlayerAAdditionalRegenHealingOpportunity);
+    }
+
+    // Confirms truncated overkill Life Steal can rescue both attackers before death checks.
+    private static void TestLifeSteal()
+    {
+        WeaponAttackProfile profile = CreateProfile();
+        CharacterStats stats = BuildStats(
+            attackPower: 0,
+            health: 100,
+            weaponDamage: 150,
+            lifeSteal: 0.50);
+        Loadout playerA = NewLoadout("A", stats, profile);
+        Loadout playerB = NewLoadout("B", stats, profile);
+        TimedCombatResult result = TimeBasedCombatSimulator.Simulate(
+            playerA,
+            playerB,
+            DefaultConfig(),
+            maximumDuration: 0.5);
+
+        if (result.Outcome != CombatOutcome.Stalemate)
+            throw new Exception("Simultaneous Life Steal did not prevent lethal deaths.");
+        AssertClose(25, result.PlayerARemainingHealth);
+        AssertClose(75, result.PlayerATotalHealing);
+        AssertClose(1, result.PlayerAAdditionalLifeStealHealingOpportunity);
+
+        CombatantState truncationState = new(NewLoadout(
+            "Truncation",
+            BuildStats(0, 100, 0, lifeSteal: 0.10),
+            profile));
+        truncationState.ReceiveDamage(50);
+        truncationState.ApplyLifeSteal(333);
+        AssertClose(83, truncationState.CurrentHealth);
+        AssertClose(33, truncationState.TotalHealing);
+    }
+
     // Confirms profile-aware smooth weights and the one-percentage-point Attack Speed unit.
     private static void TestContextualWeights()
     {
@@ -287,7 +368,23 @@ public static class RegressionSuite
         AssertClose(first.ArmorPenetration.MedianWeight, second.ArmorPenetration.MedianWeight);
         AssertClose(first.CriticalChance.MedianWeight, second.CriticalChance.MedianWeight);
         AssertClose(first.CriticalDamage.MedianWeight, second.CriticalDamage.MedianWeight);
+        AssertClose(first.HealthRegen.MedianWeight, second.HealthRegen.MedianWeight);
+        AssertClose(first.LifeSteal.MedianWeight, second.LifeSteal.MedianWeight);
         AssertClose(first.AverageCompletedFightDuration, second.AverageCompletedFightDuration);
+        AssertClose(first.ShortestCompletedFightDuration, second.ShortestCompletedFightDuration);
+        AssertClose(first.LongestCompletedFightDuration, second.LongestCompletedFightDuration);
+        AssertClose(first.ShortestFight!.Fight.Duration, first.ShortestCompletedFightDuration);
+        AssertClose(first.LongestFight!.Fight.Duration, first.LongestCompletedFightDuration);
+        AssertClose(
+            first.MaximumHealthRegenWeightFight.HealthRegenWeight,
+            first.HealthRegen.MaximumWeight);
+        if (first.ShortestFight.PlayerA.Items.Count == 0 ||
+            first.ShortestFight.PlayerB.Items.Count == 0 ||
+            first.LongestFight.PlayerA.Items.Count == 0 ||
+            first.LongestFight.PlayerB.Items.Count == 0)
+        {
+            throw new Exception("Fight diagnostics did not retain both complete builds.");
+        }
         AssertClose(
             first.StrongestAttackSpeedBuilds.Max(entry => entry.DamagePerSecond),
             second.StrongestAttackSpeedBuilds.Max(entry => entry.DamagePerSecond));
@@ -391,7 +488,9 @@ public static class RegressionSuite
         double armor = 0,
         double armorPenetration = 0,
         double criticalChance = 0,
-        double criticalDamage = 0)
+        double criticalDamage = 0,
+        double healthRegen = 0,
+        double lifeSteal = 0)
     {
         CharacterStatsBuilder builder = new();
         builder.Set(AttributeId.AttackPower, attackPower);
@@ -401,6 +500,8 @@ public static class RegressionSuite
         builder.Set(AttributeId.ArmorPenetration, armorPenetration);
         builder.Set(AttributeId.CriticalChance, criticalChance);
         builder.Set(AttributeId.CriticalDamage, criticalDamage);
+        builder.Set(AttributeId.HealthRegen, healthRegen);
+        builder.Set(AttributeId.LifeSteal, lifeSteal);
         return builder.Build();
     }
 
