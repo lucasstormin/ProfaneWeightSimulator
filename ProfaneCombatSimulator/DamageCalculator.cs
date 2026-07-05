@@ -22,11 +22,23 @@ public static class DamageCalculator
         CombatConfig config,
         double targetArmor = 0)
     {
+        int effectiveArmor = CalculateEffectiveArmor(
+            (int)targetArmor,
+            attacker[AttributeId.ArmorPenetration]);
         float armorFactor = (float)config.PhysicalArmorConstant;
-        float armor = (float)targetArmor;
+        float armor = effectiveArmor;
         float armorReduction = 1f -
             (armorFactor * armor / (1f + (armorFactor * Math.Abs(armor))));
         float baseDamage = (float)CalculateRawDamage(attacker, attack, config);
         return (int)Math.Round(baseDamage * armorReduction);
+    }
+
+    // Reproduces the game's positive percentage penetration and integer Armor truncation.
+    public static int CalculateEffectiveArmor(int targetArmor, double armorPenetration)
+    {
+        float penetration = (float)armorPenetration;
+        if (penetration > 0)
+            targetArmor = (int)(targetArmor * (1f - penetration));
+        return targetArmor;
     }
 }

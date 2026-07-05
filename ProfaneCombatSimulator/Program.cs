@@ -61,13 +61,14 @@ static void PrintReport(SimulationAnalysisResult result)
 {
     Console.WriteLine("ATTRIBUTE WEIGHT REPORT");
     Console.WriteLine("=======================");
-    Console.WriteLine($"{"Attribute",-20} {"Recommended Weight",20} {"Typical Range",22} {"Variation",18}");
-    Console.WriteLine(new string('-', 84));
-    Console.WriteLine($"{"Attack Power",-20} {1.0,20:F4} {"Fixed",22} {"None",18}");
+    Console.WriteLine($"{"Attribute",-27} {"Recommended Weight",20} {"Typical Range",22} {"Variation",18}");
+    Console.WriteLine(new string('-', 91));
+    Console.WriteLine($"{"Attack Power",-27} {1.0,20:F4} {"Fixed",22} {"None",18}");
     PrintSummaryRow(result.WeaponDamage);
     PrintSummaryRow(result.Health);
     PrintSummaryRow(result.AttackSpeed);
     PrintSummaryRow(result.Armor);
+    PrintSummaryRow(result.ArmorPenetration);
     Console.WriteLine();
 
     Console.WriteLine("TIME-BASED VALIDATION");
@@ -79,6 +80,7 @@ static void PrintReport(SimulationAnalysisResult result)
     Console.WriteLine($"Maximum fight duration: {TimeBasedCombatSimulator.DefaultMaximumDuration:N0} seconds");
     Console.WriteLine($"Attack Speed/AP outcome agreement: {result.AttackSpeedOutcomeAgreementRate:F2}%");
     Console.WriteLine($"Armor/AP outcome agreement: {result.ArmorOutcomeAgreementRate:F2}%");
+    Console.WriteLine($"Armor Penetration/AP outcome agreement: {result.ArmorPenetrationOutcomeAgreementRate:F2}%");
     Console.WriteLine("Formula/profile validation: Passed");
     Console.WriteLine("Timing simulation: Passed");
     Console.WriteLine();
@@ -89,6 +91,7 @@ static void PrintReport(SimulationAnalysisResult result)
     PrintDetails(result.WeaponDamage);
     PrintDetails(result.AttackSpeed);
     PrintDetails(result.Armor);
+    PrintDetails(result.ArmorPenetration);
     Console.WriteLine();
 
     Console.WriteLine("LEGEND");
@@ -99,6 +102,7 @@ static void PrintReport(SimulationAnalysisResult result)
     Console.WriteLine("Observed: Lowest and highest weights found in the simulation.");
     Console.WriteLine("Attack Speed/AP agreement: Fights where +1% Attack Speed and its calculated AP equivalent had the same outcome.");
     Console.WriteLine("Armor/AP agreement: Fights where +1 Armor and its calculated AP equivalent had the same outcome.");
+    Console.WriteLine("Armor Penetration/AP agreement: Fights where +1 percentage point and its calculated AP equivalent had the same outcome.");
 }
 
 // Prints one contextual attribute in the scalable summary table.
@@ -107,7 +111,7 @@ static void PrintSummaryRow(AttributeWeightDistributionResult distribution)
     string range = $"{distribution.FifthPercentile:F4}–{distribution.NinetyFifthPercentile:F4}";
     double variationPercent = distribution.StandardDeviation / distribution.MeanWeight * 100;
     string variation = $"{ClassifyVariation(variationPercent)} ({variationPercent:F1}%)";
-    Console.WriteLine($"{distribution.DisplayName,-20} {distribution.RecommendedWeight,20:F4} {range,22} {variation,18}");
+    Console.WriteLine($"{distribution.DisplayName,-27} {distribution.RecommendedWeight,20:F4} {range,22} {variation,18}");
 }
 
 // Prints compact distribution diagnostics for one contextual attribute.

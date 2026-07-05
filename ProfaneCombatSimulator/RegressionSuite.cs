@@ -44,6 +44,17 @@ public static class RegressionSuite
         AssertClose(83, DamageCalculator.CalculateDamage(stats, step, DefaultConfig(), 100));
         AssertClose(167, DamageCalculator.CalculateDamage(stats, step, DefaultConfig(), -100));
         AssertClose(0, DamageCalculator.CalculateDamage(stats, step, DefaultConfig(), 1_000_000_000));
+        CharacterStats penetratingStats = BuildStats(
+            attackPower: 10,
+            health: 1000,
+            weaponDamage: 100,
+            armorPenetration: 0.10);
+        AssertClose(90, DamageCalculator.CalculateEffectiveArmor(100, 0.10));
+        AssertClose(86, DamageCalculator.CalculateDamage(
+            penetratingStats,
+            step,
+            DefaultConfig(),
+            100));
     }
 
     // Confirms full loadouts obey two-handed rules and never select excluded bows.
@@ -217,13 +228,25 @@ public static class RegressionSuite
             "Test Weapon",
             BuildStats(attackPower: 10, health: 1000, weaponDamage: 100, armor: 100),
             profile);
-        (double health, double weaponDamage, double attackSpeed, double armor) =
+        (double health, double weaponDamage, double attackSpeed, double armor, double armorPenetration) =
             TimeBasedAnalysisRunner.CalculateWeights(loadout, DefaultConfig());
 
         AssertClose(2, weaponDamage);
         AssertClose(0.21, health);
         AssertClose(2.1, attackSpeed);
         AssertClose(0.7, armor);
+        double currentMultiplier = 1.0 / 1.5;
+        double increasedMultiplier = 1.0 / 1.495;
+        double expectedArmorPenetration = 315 *
+            (increasedMultiplier - currentMultiplier) / (1.5 * currentMultiplier);
+        AssertClose(expectedArmorPenetration, armorPenetration);
+        (_, _, _, double armorAgainstPenetration, _) =
+            TimeBasedAnalysisRunner.CalculateWeights(
+                loadout,
+                DefaultConfig(),
+                targetArmor: 100,
+                incomingArmorPenetration: 0.50);
+        AssertClose(0.42, armorAgainstPenetration);
     }
 
     // Confirms identical seeds produce identical distributions and timing statistics.
@@ -235,6 +258,7 @@ public static class RegressionSuite
 
         AssertClose(first.Health.MedianWeight, second.Health.MedianWeight);
         AssertClose(first.AttackSpeed.MedianWeight, second.AttackSpeed.MedianWeight);
+        AssertClose(first.ArmorPenetration.MedianWeight, second.ArmorPenetration.MedianWeight);
         AssertClose(first.AverageCompletedFightDuration, second.AverageCompletedFightDuration);
         AssertClose(
             first.StrongestAttackSpeedBuilds.Max(entry => entry.DamagePerSecond),
@@ -330,13 +354,15 @@ public static class RegressionSuite
         double attackPower,
         double health,
         double weaponDamage,
-        double armor = 0)
+        double armor = 0,
+        double armorPenetration = 0)
     {
         CharacterStatsBuilder builder = new();
         builder.Set(AttributeId.AttackPower, attackPower);
         builder.Set(AttributeId.MaxHealth, health);
         builder.Set(AttributeId.WeaponDamage, weaponDamage);
         builder.Set(AttributeId.Armor, armor);
+        builder.Set(AttributeId.ArmorPenetration, armorPenetration);
         return builder.Build();
     }
 

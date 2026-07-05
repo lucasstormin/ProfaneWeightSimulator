@@ -8,6 +8,7 @@ namespace CombatSimulator.Analysis;
 public static class TimeBasedAnalysisRunner
 {
     private const double AttackSpeedUnit = 0.01;
+    private const double ArmorPenetrationUnit = 0.01;
     private const int RetainedStrongestBuilds = 20;
 
     // Runs weight sampling and deterministic combat validation with one reproducible seed.
@@ -25,10 +26,11 @@ public static class TimeBasedAnalysisRunner
         double[] weaponDamageWeights = new double[fights];
         double[] attackSpeedWeights = new double[fights];
         double[] armorWeights = new double[fights];
+        double[] armorPenetrationWeights = new double[fights];
         List<AttackSpeedDiagnosticEntry> strongestBuilds = new(RetainedStrongestBuilds);
         Dictionary<(string Weapon, string Profile), DpsAccumulator> dpsAccumulators = [];
-        WeightedLoadout?[] minimums = new WeightedLoadout?[4];
-        WeightedLoadout?[] maximums = new WeightedLoadout?[4];
+        WeightedLoadout?[] minimums = new WeightedLoadout?[5];
+        WeightedLoadout?[] maximums = new WeightedLoadout?[5];
 
         int stalemates = 0;
         int draws = 0;
@@ -36,18 +38,24 @@ public static class TimeBasedAnalysisRunner
         double completedDurationTotal = 0;
         int outcomeAgreements = 0;
         int armorOutcomeAgreements = 0;
+        int armorPenetrationOutcomeAgreements = 0;
 
         for (int index = 0; index < fights; index++)
         {
             Loadout playerA = generator.Generate();
             Loadout playerB = generator.Generate();
 
-            (double health, double weaponDamage, double attackSpeed, double armor) =
-                CalculateWeights(playerA, gameData.CombatConfig);
+            (double health, double weaponDamage, double attackSpeed, double armor, double armorPenetration) =
+                CalculateWeights(
+                    playerA,
+                    gameData.CombatConfig,
+                    playerB.Stats[AttributeId.Armor],
+                    playerB.Stats[AttributeId.ArmorPenetration]);
             healthWeights[index] = health;
             weaponDamageWeights[index] = weaponDamage;
             attackSpeedWeights[index] = attackSpeed;
             armorWeights[index] = armor;
+            armorPenetrationWeights[index] = armorPenetration;
             double cycleDamage = playerA.AttackProfile.Steps.Sum(step =>
                 DamageCalculator.CalculateRawDamage(playerA.Stats, step, gameData.CombatConfig));
             double baseCycleDuration = playerA.AttackProfile.Steps.Sum(step => step.TotalDuration);
@@ -61,7 +69,11 @@ public static class TimeBasedAnalysisRunner
             };
             RetainStrongestBuild(strongestBuilds, diagnostic);
             AddDpsSample(dpsAccumulators, diagnostic);
-            UpdateExtremes(minimums, maximums, playerA, [health, weaponDamage, attackSpeed, armor]);
+            UpdateExtremes(
+                minimums,
+                maximums,
+                playerA,
+                [health, weaponDamage, attackSpeed, armor, armorPenetration]);
 
             TimedCombatResult baseFight =
                 TimeBasedCombatSimulator.Simulate(playerA, playerB, gameData.CombatConfig);
@@ -98,6 +110,23 @@ public static class TimeBasedAnalysisRunner
                 .Outcome;
             if (armorOutcome == armorAttackPowerOutcome)
                 armorOutcomeAgreements++;
+
+            Loadout armorPenetrationBuffed = WithAddedStat(
+                playerA,
+                AttributeId.ArmorPenetration,
+                ArmorPenetrationUnit);
+            Loadout armorPenetrationEquivalentAttackPower = WithAddedStat(
+                playerA,
+                AttributeId.AttackPower,
+                armorPenetration);
+            CombatOutcome armorPenetrationOutcome = TimeBasedCombatSimulator
+                .Simulate(armorPenetrationBuffed, playerB, gameData.CombatConfig)
+                .Outcome;
+            CombatOutcome armorPenetrationAttackPowerOutcome = TimeBasedCombatSimulator
+                .Simulate(armorPenetrationEquivalentAttackPower, playerB, gameData.CombatConfig)
+                .Outcome;
+            if (armorPenetrationOutcome == armorPenetrationAttackPowerOutcome)
+                armorPenetrationOutcomeAgreements++;
         }
 
         return new SimulationAnalysisResult
@@ -111,6 +140,8 @@ public static class TimeBasedAnalysisRunner
             AttackSpeedOutcomeAgreements = outcomeAgreements,
             ArmorValidationComparisons = fights,
             ArmorOutcomeAgreements = armorOutcomeAgreements,
+            ArmorPenetrationValidationComparisons = fights,
+            ArmorPenetrationOutcomeAgreements = armorPenetrationOutcomeAgreements,
             StrongestAttackSpeedBuilds = strongestBuilds
                 .OrderByDescending(entry => entry.DamagePerSecond)
                 .ToArray(),
@@ -142,7 +173,14 @@ public static class TimeBasedAnalysisRunner
                 "1 Armor",
                 armorWeights,
                 minimums[3]!,
-                maximums[3]!)
+                maximums[3]!),
+            ArmorPenetration = CreateDistribution(
+                AttributeId.ArmorPenetration,
+                "Armor Penetration (1%)",
+                "1 percentage point",
+                armorPenetrationWeights,
+                minimums[4]!,
+                maximums[4]!)
         };
     }
 
@@ -194,9 +232,16 @@ public static class TimeBasedAnalysisRunner
     }
 
     // Derives smooth marginal weights from one profile's complete three-hit damage cycle.
-    public static (double Health, double WeaponDamage, double AttackSpeed, double Armor) CalculateWeights(
+    public static (
+        double Health,
+        double WeaponDamage,
+        double AttackSpeed,
+        double Armor,
+        double ArmorPenetration) CalculateWeights(
         Loadout loadout,
-        CombatConfig config)
+        CombatConfig config,
+        double? targetArmor = null,
+        double incomingArmorPenetration = 0)
     {
         double attackPowerCycleContribution =
             loadout.AttackProfile.Steps.Count * config.AttackPowerMultiplier;
@@ -211,23 +256,79 @@ public static class TimeBasedAnalysisRunner
             throw new InvalidOperationException("Attack Speed must keep the duration divisor positive.");
         double armorMarginalFraction = CalculateArmorMarginalFraction(
             loadout.Stats[AttributeId.Armor],
+            config.PhysicalArmorConstant,
+            incomingArmorPenetration);
+        double armorPenetrationWeight = CalculateArmorPenetrationWeight(
+            cycleDamage,
+            attackPowerCycleContribution,
+            targetArmor ?? loadout.Stats[AttributeId.Armor],
+            loadout.Stats[AttributeId.ArmorPenetration],
             config.PhysicalArmorConstant);
 
         return (
             cycleDamage / (loadout.Stats.MaxHealth * attackPowerCycleContribution),
             multiplierTotal / attackPowerCycleContribution,
             cycleDamage * AttackSpeedUnit / (speedFactor * attackPowerCycleContribution),
-            cycleDamage * armorMarginalFraction / attackPowerCycleContribution);
+            cycleDamage * armorMarginalFraction / attackPowerCycleContribution,
+            armorPenetrationWeight);
+    }
+
+    // Converts a smooth one-percentage-point penetration gain into equivalent Attack Power.
+    private static double CalculateArmorPenetrationWeight(
+        double cycleDamage,
+        double attackPowerCycleContribution,
+        double targetArmor,
+        double currentPenetration,
+        double armorConstant)
+    {
+        if (currentPenetration < 0 || currentPenetration + ArmorPenetrationUnit >= 1)
+            throw new InvalidOperationException("Armor Penetration must remain between 0% and 99%.");
+
+        double currentEffectiveArmor = currentPenetration > 0
+            ? targetArmor * (1 - currentPenetration)
+            : targetArmor;
+        double increasedEffectiveArmor = targetArmor *
+            (1 - (currentPenetration + ArmorPenetrationUnit));
+        double currentMultiplier = CalculatePhysicalDamageMultiplier(
+            currentEffectiveArmor,
+            armorConstant);
+        double increasedMultiplier = CalculatePhysicalDamageMultiplier(
+            increasedEffectiveArmor,
+            armorConstant);
+
+        return cycleDamage * (increasedMultiplier - currentMultiplier) /
+            (attackPowerCycleContribution * currentMultiplier);
+    }
+
+    // Evaluates the continuous physical-damage multiplier used for smooth weighting.
+    private static double CalculatePhysicalDamageMultiplier(double armor, double armorConstant)
+    {
+        return 1 -
+            (armorConstant * armor / (1 + armorConstant * Math.Abs(armor)));
     }
 
     // Calculates the fractional physical effective-Health gain from one additional Armor.
-    private static double CalculateArmorMarginalFraction(double armor, double armorConstant)
+    private static double CalculateArmorMarginalFraction(
+        double armor,
+        double armorConstant,
+        double incomingArmorPenetration)
     {
-        if (armor >= 0)
-            return armorConstant / (1 + armorConstant * armor);
+        if (incomingArmorPenetration < 0 || incomingArmorPenetration >= 1)
+            throw new InvalidOperationException("Incoming Armor Penetration must remain between 0% and 99%.");
 
-        return (2 * armorConstant / (1 - 2 * armorConstant * armor)) -
-            (armorConstant / (1 - armorConstant * armor));
+        double retainedArmorFraction = incomingArmorPenetration > 0
+            ? 1 - incomingArmorPenetration
+            : 1;
+        double effectiveArmor = armor * retainedArmorFraction;
+        if (effectiveArmor >= 0)
+        {
+            return retainedArmorFraction * armorConstant /
+                (1 + armorConstant * effectiveArmor);
+        }
+
+        return retainedArmorFraction *
+            ((2 * armorConstant / (1 - 2 * armorConstant * effectiveArmor)) -
+            (armorConstant / (1 - armorConstant * effectiveArmor)));
     }
 
     // Copies a loadout while changing one immutable character stat for paired validation.
