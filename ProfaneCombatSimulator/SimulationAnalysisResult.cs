@@ -14,11 +14,17 @@ public sealed class SimulationAnalysisResult
     public required int ArmorOutcomeAgreements { get; init; }
     public required int ArmorPenetrationValidationComparisons { get; init; }
     public required int ArmorPenetrationOutcomeAgreements { get; init; }
+    public required int CriticalChanceValidationComparisons { get; init; }
+    public required int CriticalChanceOutcomeAgreements { get; init; }
+    public required int CriticalDamageValidationComparisons { get; init; }
+    public required int CriticalDamageOutcomeAgreements { get; init; }
     public required AttributeWeightDistributionResult Health { get; init; }
     public required AttributeWeightDistributionResult WeaponDamage { get; init; }
     public required AttributeWeightDistributionResult AttackSpeed { get; init; }
     public required AttributeWeightDistributionResult Armor { get; init; }
     public required AttributeWeightDistributionResult ArmorPenetration { get; init; }
+    public required AttributeWeightDistributionResult CriticalChance { get; init; }
+    public required AttributeWeightDistributionResult CriticalDamage { get; init; }
     public required IReadOnlyList<AttackSpeedDiagnosticEntry> StrongestAttackSpeedBuilds { get; init; }
     public required IReadOnlyList<WeaponProfileDpsSummary> WeaponProfileDpsSummaries { get; init; }
 
@@ -37,4 +43,16 @@ public sealed class SimulationAnalysisResult
             ? 0
             : (double)ArmorPenetrationOutcomeAgreements /
                 ArmorPenetrationValidationComparisons * 100;
+
+    public double CriticalChanceOutcomeAgreementRate =>
+        CriticalChanceValidationComparisons == 0
+            ? 0
+            : (double)CriticalChanceOutcomeAgreements /
+                CriticalChanceValidationComparisons * 100;
+
+    public double CriticalDamageOutcomeAgreementRate =>
+        CriticalDamageValidationComparisons == 0
+            ? 0
+            : (double)CriticalDamageOutcomeAgreements /
+                CriticalDamageValidationComparisons * 100;
 }

@@ -16,7 +16,8 @@ public static class TimeBasedCombatSimulator
         Loadout playerB,
         CombatConfig config,
         double maximumDuration = DefaultMaximumDuration,
-        int maximumEvents = DefaultMaximumEvents)
+        int maximumEvents = DefaultMaximumEvents,
+        int randomSeed = 0)
     {
         if (maximumDuration <= 0)
             throw new ArgumentOutOfRangeException(nameof(maximumDuration));
@@ -25,6 +26,8 @@ public static class TimeBasedCombatSimulator
 
         CombatantState stateA = new(playerA);
         CombatantState stateB = new(playerB);
+        Random playerACriticalRolls = new(randomSeed);
+        Random playerBCriticalRolls = new(unchecked(randomSeed ^ (int)0x9E3779B9));
 
         for (int eventCount = 0; eventCount < maximumEvents; eventCount++)
         {
@@ -37,11 +40,23 @@ public static class TimeBasedCombatSimulator
 
             double damageToB = playerAHits
                 ? DamageCalculator.CalculateDamage(
-                    stateA.Stats, stateA.CurrentStep, config, stateB.Stats[AttributeId.Armor])
+                    stateA.Stats,
+                    stateA.CurrentStep,
+                    config,
+                    stateB.Stats[AttributeId.Armor],
+                    playerACriticalRolls.Next(
+                        DamageCalculator.MinimumChanceRoll,
+                        DamageCalculator.MaximumChanceRollExclusive))
                 : 0;
             double damageToA = playerBHits
                 ? DamageCalculator.CalculateDamage(
-                    stateB.Stats, stateB.CurrentStep, config, stateA.Stats[AttributeId.Armor])
+                    stateB.Stats,
+                    stateB.CurrentStep,
+                    config,
+                    stateA.Stats[AttributeId.Armor],
+                    playerBCriticalRolls.Next(
+                        DamageCalculator.MinimumChanceRoll,
+                        DamageCalculator.MaximumChanceRollExclusive))
                 : 0;
 
             if (playerAHits)

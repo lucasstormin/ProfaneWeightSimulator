@@ -5,6 +5,10 @@ namespace CombatSimulator.Combat;
 // Calculates attack damage from character attributes and combat settings.
 public static class DamageCalculator
 {
+    public const double BaseCriticalDamageBonus = 0.50;
+    public const int MinimumChanceRoll = 1;
+    public const int MaximumChanceRollExclusive = 10_001;
+
     // Calculates unrounded damage for one profile-specific combo attack.
     public static double CalculateRawDamage(
         CharacterStats attacker,
@@ -20,8 +24,17 @@ public static class DamageCalculator
         CharacterStats attacker,
         AttackStep attack,
         CombatConfig config,
-        double targetArmor = 0)
+        double targetArmor = 0,
+        int criticalRoll = MaximumChanceRollExclusive - 1)
     {
+        int baseDamage = (int)CalculateRawDamage(attacker, attack, config);
+        if (IsCriticalHit(attacker[AttributeId.CriticalChance], criticalRoll))
+        {
+            float criticalMultiplier = (float)(
+                1 + BaseCriticalDamageBonus + attacker[AttributeId.CriticalDamage]);
+            baseDamage = (int)(baseDamage * criticalMultiplier);
+        }
+
         int effectiveArmor = CalculateEffectiveArmor(
             (int)targetArmor,
             attacker[AttributeId.ArmorPenetration]);
@@ -29,8 +42,19 @@ public static class DamageCalculator
         float armor = effectiveArmor;
         float armorReduction = 1f -
             (armorFactor * armor / (1f + (armorFactor * Math.Abs(armor))));
-        float baseDamage = (float)CalculateRawDamage(attacker, attack, config);
         return (int)Math.Round(baseDamage * armorReduction);
+    }
+
+    // Applies the game's inclusive chance comparison to one roll from 1 through 10,000.
+    public static bool IsCriticalHit(double criticalChance, int criticalRoll)
+    {
+        if (criticalRoll < MinimumChanceRoll || criticalRoll >= MaximumChanceRollExclusive)
+            throw new ArgumentOutOfRangeException(nameof(criticalRoll));
+        if (criticalChance <= 0)
+            return false;
+
+        float runtimeChance = (float)(criticalChance * 10_000);
+        return runtimeChance >= criticalRoll;
     }
 
     // Reproduces the game's positive percentage penetration and integer Armor truncation.

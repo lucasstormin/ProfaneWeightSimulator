@@ -18,6 +18,8 @@ public static partial class GameSheetParser
         startingStats.Set(AttributeId.MaxHealth, FindMinimum(caps, AttributeId.MaxHealth));
         startingStats.Set(AttributeId.WeaponDamage, FindMinimum(caps, AttributeId.WeaponDamage));
         startingStats.Set(AttributeId.Armor, FindMinimum(caps, AttributeId.Armor));
+        startingStats.Set(AttributeId.CriticalChance, FindMinimum(caps, AttributeId.CriticalChance));
+        startingStats.Set(AttributeId.CriticalDamage, FindMinimum(caps, AttributeId.CriticalDamage));
 
         CombatConfig config = new()
         {

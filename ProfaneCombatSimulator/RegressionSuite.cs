@@ -55,6 +55,23 @@ public static class RegressionSuite
             step,
             DefaultConfig(),
             100));
+        CharacterStats criticalStats = BuildStats(
+            attackPower: 10,
+            health: 1000,
+            weaponDamage: 100,
+            criticalChance: 0.10);
+        AssertClose(187, DamageCalculator.CalculateDamage(
+            criticalStats, step, DefaultConfig(), criticalRoll: 1000));
+        AssertClose(125, DamageCalculator.CalculateDamage(
+            criticalStats, step, DefaultConfig(), criticalRoll: 1001));
+        CharacterStats strongerCriticalStats = BuildStats(
+            attackPower: 10,
+            health: 1000,
+            weaponDamage: 100,
+            criticalChance: 0.10,
+            criticalDamage: 0.50);
+        AssertClose(250, DamageCalculator.CalculateDamage(
+            strongerCriticalStats, step, DefaultConfig(), criticalRoll: 1000));
     }
 
     // Confirms full loadouts obey two-handed rules and never select excluded bows.
@@ -228,7 +245,14 @@ public static class RegressionSuite
             "Test Weapon",
             BuildStats(attackPower: 10, health: 1000, weaponDamage: 100, armor: 100),
             profile);
-        (double health, double weaponDamage, double attackSpeed, double armor, double armorPenetration) =
+        (
+            double health,
+            double weaponDamage,
+            double attackSpeed,
+            double armor,
+            double armorPenetration,
+            double criticalChance,
+            double criticalDamage) =
             TimeBasedAnalysisRunner.CalculateWeights(loadout, DefaultConfig());
 
         AssertClose(2, weaponDamage);
@@ -240,7 +264,9 @@ public static class RegressionSuite
         double expectedArmorPenetration = 315 *
             (increasedMultiplier - currentMultiplier) / (1.5 * currentMultiplier);
         AssertClose(expectedArmorPenetration, armorPenetration);
-        (_, _, _, double armorAgainstPenetration, _) =
+        AssertClose(1.05, criticalChance);
+        AssertClose(0, criticalDamage);
+        (_, _, _, double armorAgainstPenetration, _, _, _) =
             TimeBasedAnalysisRunner.CalculateWeights(
                 loadout,
                 DefaultConfig(),
@@ -259,6 +285,8 @@ public static class RegressionSuite
         AssertClose(first.Health.MedianWeight, second.Health.MedianWeight);
         AssertClose(first.AttackSpeed.MedianWeight, second.AttackSpeed.MedianWeight);
         AssertClose(first.ArmorPenetration.MedianWeight, second.ArmorPenetration.MedianWeight);
+        AssertClose(first.CriticalChance.MedianWeight, second.CriticalChance.MedianWeight);
+        AssertClose(first.CriticalDamage.MedianWeight, second.CriticalDamage.MedianWeight);
         AssertClose(first.AverageCompletedFightDuration, second.AverageCompletedFightDuration);
         AssertClose(
             first.StrongestAttackSpeedBuilds.Max(entry => entry.DamagePerSecond),
@@ -270,6 +298,8 @@ public static class RegressionSuite
         {
             throw new Exception("Compact diagnostics retained an unexpected sample count.");
         }
+        if (first.CriticalDamageValidationComparisons != 100)
+            throw new Exception("Eligible Critical Damage samples were not retained correctly.");
         if (first.Stalemates != second.Stalemates)
             throw new Exception("Seeded stalemate counts differ.");
         if (first.Draws != second.Draws)
@@ -279,7 +309,11 @@ public static class RegressionSuite
     // Builds a minimal valid game dataset with one eligible weapon and one excluded bow.
     private static GameData CreateTestGameData()
     {
-        CharacterStats startingStats = BuildStats(attackPower: 10, health: 1000, weaponDamage: 10);
+        CharacterStats startingStats = BuildStats(
+            attackPower: 10,
+            health: 1000,
+            weaponDamage: 10,
+            criticalChance: 0.10);
         WeaponAttackProfile profile = CreateProfile();
         List<Item> items =
         [
@@ -355,7 +389,9 @@ public static class RegressionSuite
         double health,
         double weaponDamage,
         double armor = 0,
-        double armorPenetration = 0)
+        double armorPenetration = 0,
+        double criticalChance = 0,
+        double criticalDamage = 0)
     {
         CharacterStatsBuilder builder = new();
         builder.Set(AttributeId.AttackPower, attackPower);
@@ -363,6 +399,8 @@ public static class RegressionSuite
         builder.Set(AttributeId.WeaponDamage, weaponDamage);
         builder.Set(AttributeId.Armor, armor);
         builder.Set(AttributeId.ArmorPenetration, armorPenetration);
+        builder.Set(AttributeId.CriticalChance, criticalChance);
+        builder.Set(AttributeId.CriticalDamage, criticalDamage);
         return builder.Build();
     }
 

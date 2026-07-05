@@ -9,6 +9,9 @@ public static class TimeBasedAnalysisRunner
 {
     private const double AttackSpeedUnit = 0.01;
     private const double ArmorPenetrationUnit = 0.01;
+    private const double CriticalChanceUnit = 0.01;
+    private const double CriticalDamageUnit = 0.01;
+    public const double CriticalDamageMinimumChance = 0.10;
     private const int RetainedStrongestBuilds = 20;
 
     // Runs weight sampling and deterministic combat validation with one reproducible seed.
@@ -27,10 +30,12 @@ public static class TimeBasedAnalysisRunner
         double[] attackSpeedWeights = new double[fights];
         double[] armorWeights = new double[fights];
         double[] armorPenetrationWeights = new double[fights];
+        double[] criticalChanceWeights = new double[fights];
+        List<double> criticalDamageWeights = new(fights);
         List<AttackSpeedDiagnosticEntry> strongestBuilds = new(RetainedStrongestBuilds);
         Dictionary<(string Weapon, string Profile), DpsAccumulator> dpsAccumulators = [];
-        WeightedLoadout?[] minimums = new WeightedLoadout?[5];
-        WeightedLoadout?[] maximums = new WeightedLoadout?[5];
+        WeightedLoadout?[] minimums = new WeightedLoadout?[7];
+        WeightedLoadout?[] maximums = new WeightedLoadout?[7];
 
         int stalemates = 0;
         int draws = 0;
@@ -39,13 +44,23 @@ public static class TimeBasedAnalysisRunner
         int outcomeAgreements = 0;
         int armorOutcomeAgreements = 0;
         int armorPenetrationOutcomeAgreements = 0;
+        int criticalChanceOutcomeAgreements = 0;
+        int criticalDamageOutcomeAgreements = 0;
 
         for (int index = 0; index < fights; index++)
         {
             Loadout playerA = generator.Generate();
             Loadout playerB = generator.Generate();
 
-            (double health, double weaponDamage, double attackSpeed, double armor, double armorPenetration) =
+            int combatSeed = unchecked(seed * 397 ^ index * 1_000_003);
+            (
+                double health,
+                double weaponDamage,
+                double attackSpeed,
+                double armor,
+                double armorPenetration,
+                double criticalChance,
+                double criticalDamage) =
                 CalculateWeights(
                     playerA,
                     gameData.CombatConfig,
@@ -56,15 +71,39 @@ public static class TimeBasedAnalysisRunner
             attackSpeedWeights[index] = attackSpeed;
             armorWeights[index] = armor;
             armorPenetrationWeights[index] = armorPenetration;
+            criticalChanceWeights[index] = criticalChance;
+            bool criticalDamageEligible =
+                playerA.Stats[AttributeId.CriticalChance] >= CriticalDamageMinimumChance;
+            if (criticalDamageEligible)
+            {
+                criticalDamageWeights.Add(criticalDamage);
+                if (minimums[6] is null || criticalDamage < minimums[6]!.Weight)
+                {
+                    minimums[6] = new WeightedLoadout
+                    {
+                        Loadout = playerA,
+                        Weight = criticalDamage
+                    };
+                }
+                if (maximums[6] is null || criticalDamage > maximums[6]!.Weight)
+                {
+                    maximums[6] = new WeightedLoadout
+                    {
+                        Loadout = playerA,
+                        Weight = criticalDamage
+                    };
+                }
+            }
             double cycleDamage = playerA.AttackProfile.Steps.Sum(step =>
                 DamageCalculator.CalculateRawDamage(playerA.Stats, step, gameData.CombatConfig));
             double baseCycleDuration = playerA.AttackProfile.Steps.Sum(step => step.TotalDuration);
             double speedFactor = 1 + playerA.Stats[AttributeId.AttackSpeed];
+            double expectedCriticalMultiplier = CalculateExpectedCriticalMultiplier(playerA.Stats);
             AttackSpeedDiagnosticEntry diagnostic = new()
             {
                 Weight = attackSpeed,
-                CycleDamage = cycleDamage,
-                DamagePerSecond = cycleDamage * speedFactor / baseCycleDuration,
+                CycleDamage = cycleDamage * expectedCriticalMultiplier,
+                DamagePerSecond = cycleDamage * expectedCriticalMultiplier * speedFactor / baseCycleDuration,
                 Loadout = playerA
             };
             RetainStrongestBuild(strongestBuilds, diagnostic);
@@ -73,10 +112,21 @@ public static class TimeBasedAnalysisRunner
                 minimums,
                 maximums,
                 playerA,
-                [health, weaponDamage, attackSpeed, armor, armorPenetration]);
+                [
+                    health,
+                    weaponDamage,
+                    attackSpeed,
+                    armor,
+                    armorPenetration,
+                    criticalChance
+                ]);
 
             TimedCombatResult baseFight =
-                TimeBasedCombatSimulator.Simulate(playerA, playerB, gameData.CombatConfig);
+                TimeBasedCombatSimulator.Simulate(
+                    playerA,
+                    playerB,
+                    gameData.CombatConfig,
+                    randomSeed: combatSeed);
             if (baseFight.Outcome == CombatOutcome.Stalemate)
             {
                 stalemates++;
@@ -92,10 +142,10 @@ public static class TimeBasedAnalysisRunner
             Loadout attackSpeedBuffed = WithAddedStat(playerA, AttributeId.AttackSpeed, AttackSpeedUnit);
             Loadout attackPowerBuffed = WithAddedStat(playerA, AttributeId.AttackPower, attackSpeed);
             CombatOutcome attackSpeedOutcome = TimeBasedCombatSimulator
-                .Simulate(attackSpeedBuffed, playerB, gameData.CombatConfig)
+                .Simulate(attackSpeedBuffed, playerB, gameData.CombatConfig, randomSeed: combatSeed)
                 .Outcome;
             CombatOutcome attackPowerOutcome = TimeBasedCombatSimulator
-                .Simulate(attackPowerBuffed, playerB, gameData.CombatConfig)
+                .Simulate(attackPowerBuffed, playerB, gameData.CombatConfig, randomSeed: combatSeed)
                 .Outcome;
             if (attackSpeedOutcome == attackPowerOutcome)
                 outcomeAgreements++;
@@ -103,10 +153,10 @@ public static class TimeBasedAnalysisRunner
             Loadout armorBuffed = WithAddedStat(playerA, AttributeId.Armor, 1);
             Loadout armorEquivalentAttackPower = WithAddedStat(playerA, AttributeId.AttackPower, armor);
             CombatOutcome armorOutcome = TimeBasedCombatSimulator
-                .Simulate(armorBuffed, playerB, gameData.CombatConfig)
+                .Simulate(armorBuffed, playerB, gameData.CombatConfig, randomSeed: combatSeed)
                 .Outcome;
             CombatOutcome armorAttackPowerOutcome = TimeBasedCombatSimulator
-                .Simulate(armorEquivalentAttackPower, playerB, gameData.CombatConfig)
+                .Simulate(armorEquivalentAttackPower, playerB, gameData.CombatConfig, randomSeed: combatSeed)
                 .Outcome;
             if (armorOutcome == armorAttackPowerOutcome)
                 armorOutcomeAgreements++;
@@ -120,13 +170,72 @@ public static class TimeBasedAnalysisRunner
                 AttributeId.AttackPower,
                 armorPenetration);
             CombatOutcome armorPenetrationOutcome = TimeBasedCombatSimulator
-                .Simulate(armorPenetrationBuffed, playerB, gameData.CombatConfig)
+                .Simulate(armorPenetrationBuffed, playerB, gameData.CombatConfig, randomSeed: combatSeed)
                 .Outcome;
             CombatOutcome armorPenetrationAttackPowerOutcome = TimeBasedCombatSimulator
-                .Simulate(armorPenetrationEquivalentAttackPower, playerB, gameData.CombatConfig)
+                .Simulate(
+                    armorPenetrationEquivalentAttackPower,
+                    playerB,
+                    gameData.CombatConfig,
+                    randomSeed: combatSeed)
                 .Outcome;
             if (armorPenetrationOutcome == armorPenetrationAttackPowerOutcome)
                 armorPenetrationOutcomeAgreements++;
+
+            Loadout criticalChanceBuffed = WithAddedStat(
+                playerA,
+                AttributeId.CriticalChance,
+                CriticalChanceUnit);
+            Loadout criticalChanceEquivalentAttackPower = WithAddedStat(
+                playerA,
+                AttributeId.AttackPower,
+                criticalChance);
+            CombatOutcome criticalChanceOutcome = TimeBasedCombatSimulator
+                .Simulate(criticalChanceBuffed, playerB, gameData.CombatConfig, randomSeed: combatSeed)
+                .Outcome;
+            CombatOutcome criticalChanceAttackPowerOutcome = TimeBasedCombatSimulator
+                .Simulate(
+                    criticalChanceEquivalentAttackPower,
+                    playerB,
+                    gameData.CombatConfig,
+                    randomSeed: combatSeed)
+                .Outcome;
+            if (criticalChanceOutcome == criticalChanceAttackPowerOutcome)
+                criticalChanceOutcomeAgreements++;
+
+            if (criticalDamageEligible)
+            {
+                Loadout criticalDamageBuffed = WithAddedStat(
+                    playerA,
+                    AttributeId.CriticalDamage,
+                    CriticalDamageUnit);
+                Loadout criticalDamageEquivalentAttackPower = WithAddedStat(
+                    playerA,
+                    AttributeId.AttackPower,
+                    criticalDamage);
+                CombatOutcome criticalDamageOutcome = TimeBasedCombatSimulator
+                    .Simulate(
+                        criticalDamageBuffed,
+                        playerB,
+                        gameData.CombatConfig,
+                        randomSeed: combatSeed)
+                    .Outcome;
+                CombatOutcome criticalDamageAttackPowerOutcome = TimeBasedCombatSimulator
+                    .Simulate(
+                        criticalDamageEquivalentAttackPower,
+                        playerB,
+                        gameData.CombatConfig,
+                        randomSeed: combatSeed)
+                    .Outcome;
+                if (criticalDamageOutcome == criticalDamageAttackPowerOutcome)
+                    criticalDamageOutcomeAgreements++;
+            }
+        }
+
+        if (criticalDamageWeights.Count == 0)
+        {
+            throw new InvalidOperationException(
+                "No sampled builds met the 10% Critical Chance requirement for Critical Damage weighting.");
         }
 
         return new SimulationAnalysisResult
@@ -142,6 +251,10 @@ public static class TimeBasedAnalysisRunner
             ArmorOutcomeAgreements = armorOutcomeAgreements,
             ArmorPenetrationValidationComparisons = fights,
             ArmorPenetrationOutcomeAgreements = armorPenetrationOutcomeAgreements,
+            CriticalChanceValidationComparisons = fights,
+            CriticalChanceOutcomeAgreements = criticalChanceOutcomeAgreements,
+            CriticalDamageValidationComparisons = criticalDamageWeights.Count,
+            CriticalDamageOutcomeAgreements = criticalDamageOutcomeAgreements,
             StrongestAttackSpeedBuilds = strongestBuilds
                 .OrderByDescending(entry => entry.DamagePerSecond)
                 .ToArray(),
@@ -180,7 +293,21 @@ public static class TimeBasedAnalysisRunner
                 "1 percentage point",
                 armorPenetrationWeights,
                 minimums[4]!,
-                maximums[4]!)
+                maximums[4]!),
+            CriticalChance = CreateDistribution(
+                AttributeId.CriticalChance,
+                "Critical Chance (1%)",
+                "1 percentage point",
+                criticalChanceWeights,
+                minimums[5]!,
+                maximums[5]!),
+            CriticalDamage = CreateDistribution(
+                AttributeId.CriticalDamage,
+                "Critical Damage (1%)*",
+                "1 percentage point",
+                criticalDamageWeights.ToArray(),
+                minimums[6]!,
+                maximums[6]!)
         };
     }
 
@@ -237,7 +364,9 @@ public static class TimeBasedAnalysisRunner
         double WeaponDamage,
         double AttackSpeed,
         double Armor,
-        double ArmorPenetration) CalculateWeights(
+        double ArmorPenetration,
+        double CriticalChance,
+        double CriticalDamage) CalculateWeights(
         Loadout loadout,
         CombatConfig config,
         double? targetArmor = null,
@@ -264,13 +393,40 @@ public static class TimeBasedAnalysisRunner
             targetArmor ?? loadout.Stats[AttributeId.Armor],
             loadout.Stats[AttributeId.ArmorPenetration],
             config.PhysicalArmorConstant);
+        double expectedCriticalMultiplier = CalculateExpectedCriticalMultiplier(loadout.Stats);
+        double criticalBonus = DamageCalculator.BaseCriticalDamageBonus +
+            loadout.Stats[AttributeId.CriticalDamage];
+        double effectiveCriticalChance = Math.Min(loadout.Stats[AttributeId.CriticalChance], 1);
+        double criticalChanceIncrease = Math.Min(
+            loadout.Stats[AttributeId.CriticalChance] + CriticalChanceUnit,
+            1) - effectiveCriticalChance;
+        double criticalChanceWeight = cycleDamage * criticalBonus * criticalChanceIncrease /
+            (attackPowerCycleContribution * expectedCriticalMultiplier);
+        double criticalDamageWeight = cycleDamage * effectiveCriticalChance *
+            CriticalDamageUnit /
+            (attackPowerCycleContribution * expectedCriticalMultiplier);
 
         return (
             cycleDamage / (loadout.Stats.MaxHealth * attackPowerCycleContribution),
             multiplierTotal / attackPowerCycleContribution,
             cycleDamage * AttackSpeedUnit / (speedFactor * attackPowerCycleContribution),
             cycleDamage * armorMarginalFraction / attackPowerCycleContribution,
-            armorPenetrationWeight);
+            armorPenetrationWeight,
+            criticalChanceWeight,
+            criticalDamageWeight);
+    }
+
+    // Calculates the smooth expected damage multiplier from chance and critical bonus.
+    private static double CalculateExpectedCriticalMultiplier(CharacterStats stats)
+    {
+        double criticalChance = stats[AttributeId.CriticalChance];
+        if (criticalChance < 0)
+            throw new InvalidOperationException("Critical Chance cannot be negative.");
+
+        double effectiveChance = Math.Min(criticalChance, 1);
+        double criticalBonus = DamageCalculator.BaseCriticalDamageBonus +
+            stats[AttributeId.CriticalDamage];
+        return 1 + effectiveChance * criticalBonus;
     }
 
     // Converts a smooth one-percentage-point penetration gain into equivalent Attack Power.

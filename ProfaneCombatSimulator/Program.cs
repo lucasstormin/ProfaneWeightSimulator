@@ -69,6 +69,8 @@ static void PrintReport(SimulationAnalysisResult result)
     PrintSummaryRow(result.AttackSpeed);
     PrintSummaryRow(result.Armor);
     PrintSummaryRow(result.ArmorPenetration);
+    PrintSummaryRow(result.CriticalChance);
+    PrintSummaryRow(result.CriticalDamage);
     Console.WriteLine();
 
     Console.WriteLine("TIME-BASED VALIDATION");
@@ -81,6 +83,10 @@ static void PrintReport(SimulationAnalysisResult result)
     Console.WriteLine($"Attack Speed/AP outcome agreement: {result.AttackSpeedOutcomeAgreementRate:F2}%");
     Console.WriteLine($"Armor/AP outcome agreement: {result.ArmorOutcomeAgreementRate:F2}%");
     Console.WriteLine($"Armor Penetration/AP outcome agreement: {result.ArmorPenetrationOutcomeAgreementRate:F2}%");
+    Console.WriteLine($"Critical Chance/AP outcome agreement: {result.CriticalChanceOutcomeAgreementRate:F2}%");
+    Console.WriteLine(
+        $"Critical Damage/AP outcome agreement: {result.CriticalDamageOutcomeAgreementRate:F2}% " +
+        $"({result.CriticalDamageValidationComparisons:N0} eligible fights)");
     Console.WriteLine("Formula/profile validation: Passed");
     Console.WriteLine("Timing simulation: Passed");
     Console.WriteLine();
@@ -92,6 +98,8 @@ static void PrintReport(SimulationAnalysisResult result)
     PrintDetails(result.AttackSpeed);
     PrintDetails(result.Armor);
     PrintDetails(result.ArmorPenetration);
+    PrintDetails(result.CriticalChance);
+    PrintDetails(result.CriticalDamage);
     Console.WriteLine();
 
     Console.WriteLine("LEGEND");
@@ -103,6 +111,9 @@ static void PrintReport(SimulationAnalysisResult result)
     Console.WriteLine("Attack Speed/AP agreement: Fights where +1% Attack Speed and its calculated AP equivalent had the same outcome.");
     Console.WriteLine("Armor/AP agreement: Fights where +1 Armor and its calculated AP equivalent had the same outcome.");
     Console.WriteLine("Armor Penetration/AP agreement: Fights where +1 percentage point and its calculated AP equivalent had the same outcome.");
+    Console.WriteLine("Critical Chance/AP agreement: Fights where +1 percentage point and its calculated AP equivalent had the same outcome.");
+    Console.WriteLine("Critical Damage/AP agreement: Fights where +1 percentage point and its calculated AP equivalent had the same outcome.");
+    Console.WriteLine("* Critical Damage uses only builds with at least 10% Critical Chance.");
 }
 
 // Prints one contextual attribute in the scalable summary table.
@@ -157,7 +168,7 @@ static void PrintAttackSpeedBuild(AttackSpeedDiagnosticEntry entry)
         $"  DPS {entry.DamagePerSecond:F2} | AS weight {entry.Weight:F4} | " +
         $"{entry.Weapon.Name} | {entry.Loadout.AttackProfile.Name} | " +
         $"AP {stats.AttackPower:F0} | WD {stats.WeaponDamage:F0} | " +
-        $"AS {stats[AttributeId.AttackSpeed]:P2} | Cycle damage {entry.CycleDamage:F1}");
+        $"AS {stats[AttributeId.AttackSpeed]:P2} | Expected cycle damage {entry.CycleDamage:F1}");
     Console.WriteLine($"    {entry.Loadout.Description}");
 }
 
