@@ -18,7 +18,7 @@ public sealed class LoadoutGenerator
 
     // Indexes eligible equipment and initializes the reproducible random sequence.
     public LoadoutGenerator(GameData gameData, int seed)
-        : this(gameData, seed, LoadoutGenerationMode.RandomPieces, 0)
+        : this(gameData, seed, LoadoutGenerationMode.RandomPieces, 0, null)
     {
     }
 
@@ -27,14 +27,19 @@ public sealed class LoadoutGenerator
         GameData gameData,
         int seed,
         LoadoutGenerationMode mode,
-        int expectedLoadouts)
+        int expectedLoadouts,
+        TailoredLoadoutSettings? tailoredSettings = null)
     {
         startingStats = gameData.StartingStats;
         attackProfiles = gameData.AttackProfiles;
         this.mode = mode;
         random = new Random(seed);
+        TailoredLoadoutSettings selectedTailoredSettings =
+            tailoredSettings ?? TailoredLoadoutSettings.CreateDefault();
         Item[] eligibleItems = mode == LoadoutGenerationMode.Tailored
-            ? gameData.Items.Where(TailoredLoadoutRules.IsEligible).ToArray()
+            ? gameData.Items
+                .Where(item => TailoredLoadoutRules.IsEligible(item, selectedTailoredSettings))
+                .ToArray()
             : gameData.Items.ToArray();
 
         itemsBySlot = eligibleItems

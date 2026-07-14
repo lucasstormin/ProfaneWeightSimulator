@@ -17,6 +17,7 @@ public static class RegressionSuite
         RunCheck("Random mode permits mixed armor sets", TestRandomArmorGeneration);
         RunCheck("Closed-set mode is complete and evenly distributed", TestClosedSetGeneration);
         RunCheck("Tailored mode excludes curated sets and weapons", TestTailoredGeneration);
+        RunCheck("Tailored input parses sets and weapon groups", TestTailoredInputParsing);
         RunCheck("Incomplete armor sets are rejected", TestIncompleteArmorSet);
         RunCheck("Attack Speed scales contact timing", TestAttackSpeedTiming);
         RunCheck("Combo order repeats 1-2-3", TestComboOrder);
@@ -168,15 +169,16 @@ public static class RegressionSuite
     // Confirms Tailored generation removes only the requested curated sets and weapons.
     private static void TestTailoredGeneration()
     {
+        TailoredLoadoutSettings settings = TailoredLoadoutSettings.CreateDefault();
         LoadoutGenerator generator = new(
-            CreateTailoredTestGameData(), 31, LoadoutGenerationMode.Tailored, 0);
+            CreateTailoredTestGameData(), 31, LoadoutGenerationMode.Tailored, 0, settings);
         Loadout[] loadouts = Enumerable.Range(0, 100)
             .Select(_ => generator.Generate())
             .ToArray();
 
         if (loadouts.Any(loadout => loadout.Items.Any(item =>
                 item.ArmorSetName is not null &&
-                TailoredLoadoutRules.ExcludedArmorSets.Contains(
+                settings.ExcludedArmorSets.Contains(
                     item.ArmorSetName,
                     StringComparer.OrdinalIgnoreCase))))
         {
@@ -185,9 +187,37 @@ public static class RegressionSuite
 
         if (loadouts.Any(loadout => loadout.Items.Any(item =>
                 item.Slot is EquipmentSlot.OneHandedWeapon or EquipmentSlot.TwoHandedWeapon &&
-                TailoredLoadoutRules.IsExcludedWeapon(item))))
+                TailoredLoadoutRules.IsExcludedWeapon(item, settings))))
         {
             throw new Exception("Tailored generation equipped an excluded weapon.");
+        }
+    }
+
+    // Confirms custom Tailored text replaces defaults and understands grouped weapon terms.
+    private static void TestTailoredInputParsing()
+    {
+        GameData gameData = CreateTailoredTestGameData();
+        bool parsed = TailoredLoadoutSettings.TryParse(
+            "Silk set, improvised weapons, staves",
+            gameData,
+            out TailoredLoadoutSettings? settings,
+            out string error);
+        if (!parsed || settings is null)
+            throw new Exception($"Tailored input did not parse: {error}");
+        if (!settings.ExcludedArmorSets.Contains("Silk", StringComparer.OrdinalIgnoreCase))
+            throw new Exception("Tailored input did not recognize an armor set.");
+        if (!settings.ExcludeImprovisedWeapons || !settings.ExcludeStaffWeapons)
+            throw new Exception("Tailored input did not recognize grouped weapon exclusions.");
+        if (settings.ExcludedArmorSets.Contains("Web", StringComparer.OrdinalIgnoreCase))
+            throw new Exception("Custom Tailored input did not replace the default exclusions.");
+
+        if (TailoredLoadoutSettings.TryParse(
+                "definitely not an item",
+                gameData,
+                out _,
+                out _))
+        {
+            throw new Exception("Tailored input accepted an unknown exclusion.");
         }
     }
 

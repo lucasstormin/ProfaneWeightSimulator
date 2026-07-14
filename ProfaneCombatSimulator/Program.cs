@@ -37,15 +37,18 @@ while (true)
 {
     int fights = ReadSimulationCount(defaultFights);
     LoadoutGenerationMode generationMode = ReadGenerationMode();
+    TailoredLoadoutSettings? tailoredSettings = generationMode == LoadoutGenerationMode.Tailored
+        ? ReadTailoredSettings(gameData)
+        : null;
     Console.WriteLine($"Loadout mode: {DescribeGenerationMode(generationMode)}");
     Console.WriteLine($"Analyzing {fights:N0} valid time-based loadouts...");
     Console.WriteLine();
 
     SimulationAnalysisResult result =
-        TimeBasedAnalysisRunner.Analyze(gameData, fights, randomSeed, generationMode);
+        TimeBasedAnalysisRunner.Analyze(gameData, fights, randomSeed, generationMode, tailoredSettings);
     PrintReport(result);
     if (generationMode == LoadoutGenerationMode.Tailored)
-        PrintTailoredExclusions(gameData);
+        PrintTailoredExclusions(gameData, tailoredSettings ?? TailoredLoadoutSettings.CreateDefault());
 
     if (Console.IsInputRedirected)
         break;
@@ -396,6 +399,30 @@ static LoadoutGenerationMode ReadGenerationMode()
     }
 }
 
+// Reads Tailored-mode exclusions, using the original curated list when the user presses Enter.
+static TailoredLoadoutSettings ReadTailoredSettings(GameData gameData)
+{
+    if (Console.IsInputRedirected)
+        return TailoredLoadoutSettings.CreateDefault();
+
+    while (true)
+    {
+        Console.WriteLine();
+        Console.WriteLine("Tailored exclusions:");
+        Console.WriteLine("Press Enter for default Tailored mode.");
+        Console.WriteLine("Or type exclusions separated by commas, e.g. Silk set, Web set, improvised weapons, staves.");
+        Console.Write("> ");
+        string input = Console.ReadLine() ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(input))
+            return TailoredLoadoutSettings.CreateDefault();
+
+        if (TailoredLoadoutSettings.TryParse(input, gameData, out TailoredLoadoutSettings? settings, out string error))
+            return settings!;
+
+        Console.WriteLine(error);
+    }
+}
+
 // Converts the selected generation policy into a concise report label.
 static string DescribeGenerationMode(LoadoutGenerationMode mode) => mode switch
 {
@@ -406,11 +433,11 @@ static string DescribeGenerationMode(LoadoutGenerationMode mode) => mode switch
 };
 
 // Prints the curated item exclusions used by Tailored mode without listing every armor piece.
-static void PrintTailoredExclusions(GameData gameData)
+static void PrintTailoredExclusions(GameData gameData, TailoredLoadoutSettings settings)
 {
     string[] excludedWeapons = gameData.Items
         .Where(item => item.Slot is EquipmentSlot.OneHandedWeapon or EquipmentSlot.TwoHandedWeapon)
-        .Where(TailoredLoadoutRules.IsExcludedWeapon)
+        .Where(item => TailoredLoadoutRules.IsExcludedWeapon(item, settings))
         .Select(item => item.Name)
         .Distinct(StringComparer.OrdinalIgnoreCase)
         .Order(StringComparer.OrdinalIgnoreCase)
@@ -419,8 +446,15 @@ static void PrintTailoredExclusions(GameData gameData)
     Console.WriteLine();
     Console.WriteLine("TAILORED MODE EXCLUSIONS");
     Console.WriteLine("========================");
-    Console.WriteLine($"Excluded armor sets: {string.Join(", ", TailoredLoadoutRules.ExcludedArmorSets)}");
-    Console.WriteLine($"Excluded weapons: {string.Join(", ", excludedWeapons)}");
+    Console.WriteLine($"Excluded armor sets: {FormatList(settings.ExcludedArmorSets.Order(StringComparer.OrdinalIgnoreCase))}");
+    Console.WriteLine($"Excluded weapons: {FormatList(excludedWeapons)}");
+}
+
+// Formats empty and populated report lists in a compact, readable way.
+static string FormatList(IEnumerable<string> values)
+{
+    string[] materialized = values.ToArray();
+    return materialized.Length == 0 ? "None" : string.Join(", ", materialized);
 }
 
 // Locates the solution root from either the current directory or executable path.

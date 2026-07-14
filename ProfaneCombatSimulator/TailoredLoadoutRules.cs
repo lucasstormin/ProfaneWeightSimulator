@@ -5,32 +5,27 @@ namespace CombatSimulator.Analysis;
 // Defines the curated equipment exclusions used by Tailored simulation mode.
 public static class TailoredLoadoutRules
 {
-    public static readonly string[] ExcludedArmorSets =
-        ["Silk", "Web", "Linen", "Hide", "Iron"];
-
-    private static readonly HashSet<string> ExcludedArmorSetLookup = new(
-        ExcludedArmorSets,
-        StringComparer.OrdinalIgnoreCase);
-
-    // Checks whether an item remains available in the curated Tailored pool.
-    public static bool IsEligible(Item item)
+    // Checks whether an item remains available in the selected Tailored pool.
+    public static bool IsEligible(Item item, TailoredLoadoutSettings settings)
     {
-        if (item.ArmorSetName is not null && ExcludedArmorSetLookup.Contains(item.ArmorSetName))
+        if (item.ArmorSetName is not null && settings.ExcludedArmorSets.Contains(item.ArmorSetName))
             return false;
 
         if (item.Slot is EquipmentSlot.OneHandedWeapon or EquipmentSlot.TwoHandedWeapon)
-            return !IsExcludedWeapon(item);
+            return !IsExcludedWeapon(item, settings);
 
         return true;
     }
 
     // Checks whether a main-hand weapon is excluded from Tailored simulations.
-    public static bool IsExcludedWeapon(Item weapon)
+    public static bool IsExcludedWeapon(Item weapon, TailoredLoadoutSettings settings)
     {
-        return weapon.Name.StartsWith("Improvised", StringComparison.OrdinalIgnoreCase) ||
-            weapon.Name.Equals("Repair Hammer", StringComparison.OrdinalIgnoreCase) ||
-            weapon.Name.Equals("Spiked Club", StringComparison.OrdinalIgnoreCase) ||
-            weapon.Name.StartsWith("Necrosis", StringComparison.OrdinalIgnoreCase) ||
-            weapon.Name.Contains("Staff", StringComparison.OrdinalIgnoreCase);
+        return settings.ExcludedWeaponNames.Contains(weapon.Name) ||
+            (settings.ExcludeImprovisedWeapons &&
+                weapon.Name.StartsWith("Improvised", StringComparison.OrdinalIgnoreCase)) ||
+            (settings.ExcludeNecrosisWeapons &&
+                weapon.Name.StartsWith("Necrosis", StringComparison.OrdinalIgnoreCase)) ||
+            (settings.ExcludeStaffWeapons &&
+                weapon.Name.Contains("Staff", StringComparison.OrdinalIgnoreCase));
     }
 }
