@@ -9,4 +9,5 @@ public sealed class GameData
     public required CombatConfig CombatConfig { get; init; }
     public required IReadOnlyList<Item> Items { get; init; }
     public required IReadOnlyDictionary<string, WeaponAttackProfile> AttackProfiles { get; init; }
+    public required IReadOnlyList<SkillDefinition> Skills { get; init; }
 }

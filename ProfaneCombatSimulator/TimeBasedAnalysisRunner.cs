@@ -21,13 +21,12 @@ public static class TimeBasedAnalysisRunner
         GameData gameData,
         int fights,
         int seed,
-        LoadoutGenerationMode mode = LoadoutGenerationMode.RandomPieces,
-        TailoredLoadoutSettings? tailoredSettings = null)
+        LoadoutGenerationMode mode = LoadoutGenerationMode.RandomPieces)
     {
         if (fights <= 0)
             throw new ArgumentOutOfRangeException(nameof(fights));
 
-        LoadoutGenerator generator = new(gameData, seed, mode, checked(fights * 2), tailoredSettings);
+        LoadoutGenerator generator = new(gameData, seed, mode, checked(fights * 2));
         double[] healthWeights = new double[fights];
         double[] weaponDamageWeights = new double[fights];
         double[] attackSpeedWeights = new double[fights];

@@ -16,8 +16,7 @@ public static class RegressionSuite
         RunCheck("Two-handed loadouts exclude off-hands and bows", TestTwoHandedLoadout);
         RunCheck("Random mode permits mixed armor sets", TestRandomArmorGeneration);
         RunCheck("Closed-set mode is complete and evenly distributed", TestClosedSetGeneration);
-        RunCheck("Tailored mode excludes curated sets and weapons", TestTailoredGeneration);
-        RunCheck("Tailored input parses sets and weapon groups", TestTailoredInputParsing);
+        RunCheck("Sheet exclusions apply to sampled loadouts", TestSheetExclusionGeneration);
         RunCheck("Incomplete armor sets are rejected", TestIncompleteArmorSet);
         RunCheck("Attack Speed scales contact timing", TestAttackSpeedTiming);
         RunCheck("Combo order repeats 1-2-3", TestComboOrder);
@@ -25,6 +24,7 @@ public static class RegressionSuite
         RunCheck("Time limit produces a stalemate", TestStalemate);
         RunCheck("Health regeneration ticks after damage and cannot revive", TestHealthRegeneration);
         RunCheck("Life Steal resolves after simultaneous overkill damage", TestLifeSteal);
+        RunCheck("Skill output uses Magic Power as its base", TestSkillOutputAnalysis);
         RunCheck("Profile-aware weights use one-percent Attack Speed units", TestContextualWeights);
         RunCheck("Seeded time-based analysis is deterministic", TestDeterministicAnalysis);
         Console.WriteLine("All regression checks passed.");
@@ -166,59 +166,43 @@ public static class RegressionSuite
         return sets[0];
     }
 
-    // Confirms Tailored generation removes only the requested curated sets and weapons.
-    private static void TestTailoredGeneration()
+    // Confirms sheet-marked exclusions are removed from both random and closed-set generation.
+    private static void TestSheetExclusionGeneration()
     {
-        TailoredLoadoutSettings settings = TailoredLoadoutSettings.CreateDefault();
-        LoadoutGenerator generator = new(
-            CreateTailoredTestGameData(), 31, LoadoutGenerationMode.Tailored, 0, settings);
-        Loadout[] loadouts = Enumerable.Range(0, 100)
-            .Select(_ => generator.Generate())
+        GameData gameData = CreateSheetExclusionTestGameData();
+        LoadoutGenerator randomGenerator = new(gameData, 31);
+        Loadout[] randomLoadouts = Enumerable.Range(0, 100)
+            .Select(_ => randomGenerator.Generate())
             .ToArray();
+        if (randomLoadouts.Any(loadout => loadout.Items.Any(item => item.ExcludeFromSimulation)))
+            throw new Exception("Random generation equipped a sheet-excluded item.");
 
-        if (loadouts.Any(loadout => loadout.Items.Any(item =>
-                item.ArmorSetName is not null &&
-                settings.ExcludedArmorSets.Contains(
-                    item.ArmorSetName,
-                    StringComparer.OrdinalIgnoreCase))))
-        {
-            throw new Exception("Tailored generation equipped an excluded armor set.");
-        }
-
-        if (loadouts.Any(loadout => loadout.Items.Any(item =>
-                item.Slot is EquipmentSlot.OneHandedWeapon or EquipmentSlot.TwoHandedWeapon &&
-                TailoredLoadoutRules.IsExcludedWeapon(item, settings))))
-        {
-            throw new Exception("Tailored generation equipped an excluded weapon.");
-        }
-    }
-
-    // Confirms custom Tailored text replaces defaults and understands grouped weapon terms.
-    private static void TestTailoredInputParsing()
-    {
-        GameData gameData = CreateTailoredTestGameData();
-        bool parsed = TailoredLoadoutSettings.TryParse(
-            "Silk set, improvised weapons, staves",
+        const int closedLoadoutCount = 40;
+        LoadoutGenerator closedGenerator = new(
             gameData,
-            out TailoredLoadoutSettings? settings,
-            out string error);
-        if (!parsed || settings is null)
-            throw new Exception($"Tailored input did not parse: {error}");
-        if (!settings.ExcludedArmorSets.Contains("Silk", StringComparer.OrdinalIgnoreCase))
-            throw new Exception("Tailored input did not recognize an armor set.");
-        if (!settings.ExcludeImprovisedWeapons || !settings.ExcludeStaffWeapons)
-            throw new Exception("Tailored input did not recognize grouped weapon exclusions.");
-        if (settings.ExcludedArmorSets.Contains("Web", StringComparer.OrdinalIgnoreCase))
-            throw new Exception("Custom Tailored input did not replace the default exclusions.");
-
-        if (TailoredLoadoutSettings.TryParse(
-                "definitely not an item",
-                gameData,
-                out _,
-                out _))
+            31,
+            LoadoutGenerationMode.ClosedArmorSet,
+            closedLoadoutCount);
+        Loadout[] closedLoadouts = Enumerable.Range(0, closedLoadoutCount)
+            .Select(_ => closedGenerator.Generate())
+            .ToArray();
+        if (closedLoadouts.Any(loadout => loadout.Items.Any(item => item.ExcludeFromSimulation)))
+            throw new Exception("Closed-set generation equipped a sheet-excluded item.");
+        if (closedLoadouts.Select(GetOnlyArmorSet)
+            .Any(setName => string.Equals(setName, "Silk", StringComparison.OrdinalIgnoreCase)))
         {
-            throw new Exception("Tailored input accepted an unknown exclusion.");
+            throw new Exception("Closed-set generation scheduled a sheet-excluded armor set.");
         }
+
+        GameData noOffHands = CreateNoOffHandTestGameData(gameData);
+        LoadoutGenerator noOffHandGenerator = new(noOffHands, 41);
+        Loadout[] noOffHandLoadouts = Enumerable.Range(0, 100)
+            .Select(_ => noOffHandGenerator.Generate())
+            .ToArray();
+        if (noOffHandLoadouts.Any(loadout => loadout.Items.Any(item => item.Slot == EquipmentSlot.OffHand)))
+            throw new Exception("Generation equipped a sheet-excluded off-hand.");
+        if (noOffHandLoadouts.Any(loadout => loadout.Items.Any(item => item.Slot == EquipmentSlot.OneHandedWeapon)))
+            throw new Exception("Generation equipped a one-handed weapon when no off-hands were available.");
     }
 
     // Confirms malformed sheet data cannot silently produce partial closed sets.
@@ -230,7 +214,8 @@ public static class RegressionSuite
             StartingStats = valid.StartingStats,
             CombatConfig = valid.CombatConfig,
             AttackProfiles = valid.AttackProfiles,
-            Items = valid.Items.Where(item => item.Name != "B Greaves").ToArray()
+            Items = valid.Items.Where(item => item.Name != "B Greaves").ToArray(),
+            Skills = valid.Skills
         };
         AssertThrows<InvalidDataException>(() => GameDataValidator.Validate(incomplete));
     }
@@ -375,6 +360,34 @@ public static class RegressionSuite
         AssertClose(33, truncationState.TotalHealing);
     }
 
+    // Confirms caster output weights are reproducible and Magic Power increases skill damage.
+    private static void TestSkillOutputAnalysis()
+    {
+        GameData gameData = CreateTestGameData();
+        SkillOutputAnalysisResult first = SkillOutputAnalysisRunner.Analyze(
+            gameData,
+            50,
+            99,
+            LoadoutGenerationMode.RandomPieces,
+            10);
+        SkillOutputAnalysisResult second = SkillOutputAnalysisRunner.Analyze(
+            gameData,
+            50,
+            99,
+            LoadoutGenerationMode.RandomPieces,
+            10);
+
+        if (first.AverageBaseOutput <= 0)
+            throw new Exception("Caster analysis produced no skill output.");
+        if (first.CooldownReduction.MedianWeight <= 0)
+            throw new Exception("Caster analysis did not value Cooldown Reduction.");
+        AssertClose(first.CooldownReduction.MedianWeight, second.CooldownReduction.MedianWeight);
+        AssertClose(first.MagicResist.MedianWeight, second.MagicResist.MedianWeight);
+        AssertClose(first.MaxMana.MedianWeight, second.MaxMana.MedianWeight);
+        AssertClose(first.ManaRegen.MedianWeight, second.ManaRegen.MedianWeight);
+        AssertClose(first.ManaEfficiency.MedianWeight, second.ManaEfficiency.MedianWeight);
+    }
+
     // Confirms profile-aware smooth weights and the one-percentage-point Attack Speed unit.
     private static void TestContextualWeights()
     {
@@ -498,30 +511,44 @@ public static class RegressionSuite
             AttackProfiles = new Dictionary<string, WeaponAttackProfile>(StringComparer.OrdinalIgnoreCase)
             {
                 [profile.Name] = profile
-            }
+            },
+            Skills = CreateTestSkills()
         };
         GameDataValidator.Validate(gameData);
         return gameData;
     }
 
-    // Builds a fixture with excluded Tailored equipment alongside valid remaining choices.
-    private static GameData CreateTailoredTestGameData()
+    // Builds a fixture with sheet-excluded equipment alongside valid remaining choices.
+    private static GameData CreateSheetExclusionTestGameData()
     {
         GameData baseData = CreateTestGameData();
         WeaponAttackProfile profile = baseData.AttackProfiles.Values.Single();
         List<Item> items = baseData.Items.ToList();
         items.AddRange(
         [
-            NewArmor("Silk Helmet", EquipmentSlot.Helmet, "Silk", AttributeId.MaxHealth, 1),
-            NewArmor("Silk Chest", EquipmentSlot.Chest, "Silk", AttributeId.MaxHealth, 1),
-            NewArmor("Silk Gloves", EquipmentSlot.Gloves, "Silk", AttributeId.MaxHealth, 1),
-            NewArmor("Silk Leggings", EquipmentSlot.Leggings, "Silk", AttributeId.MaxHealth, 1),
-            NewArmor("Silk Greaves", EquipmentSlot.Greaves, "Silk", AttributeId.MaxHealth, 1),
+            NewArmor("Silk Helmet", EquipmentSlot.Helmet, "Silk", AttributeId.MaxHealth, 1, true),
+            NewArmor("Silk Chest", EquipmentSlot.Chest, "Silk", AttributeId.MaxHealth, 1, true),
+            NewArmor("Silk Gloves", EquipmentSlot.Gloves, "Silk", AttributeId.MaxHealth, 1, true),
+            NewArmor("Silk Leggings", EquipmentSlot.Leggings, "Silk", AttributeId.MaxHealth, 1, true),
+            NewArmor("Silk Greaves", EquipmentSlot.Greaves, "Silk", AttributeId.MaxHealth, 1, true),
+            NewArmor("Web Helmet", EquipmentSlot.Helmet, "Web", AttributeId.MagicPower, 1),
+            NewArmor("Web Chest", EquipmentSlot.Chest, "Web", AttributeId.MaxHealth, 1),
+            NewArmor("Web Gloves", EquipmentSlot.Gloves, "Web", AttributeId.MaxHealth, 1),
+            NewArmor("Web Leggings", EquipmentSlot.Leggings, "Web", AttributeId.MaxHealth, 1),
+            NewArmor("Web Greaves", EquipmentSlot.Greaves, "Web", AttributeId.MaxHealth, 1),
+            NewArmor("Mage Helmet", EquipmentSlot.Helmet, "Mage", AttributeId.MagicPower, 2),
+            NewArmor("Mage Chest", EquipmentSlot.Chest, "Mage", AttributeId.MaxHealth, 2),
+            NewArmor("Mage Gloves", EquipmentSlot.Gloves, "Mage", AttributeId.MaxHealth, 2),
+            NewArmor("Mage Leggings", EquipmentSlot.Leggings, "Mage", AttributeId.MaxHealth, 2),
+            NewArmor("Mage Greaves", EquipmentSlot.Greaves, "Mage", AttributeId.MaxHealth, 2),
             NewWeapon("Improvised Axe", EquipmentSlot.OneHandedWeapon, 50, profile.Name),
-            NewWeapon("Repair Hammer", EquipmentSlot.OneHandedWeapon, 50, profile.Name),
-            NewWeapon("Spiked Club", EquipmentSlot.OneHandedWeapon, 50, profile.Name),
+            NewWeapon("Mage Wand", EquipmentSlot.OneHandedWeapon, 50, profile.Name, (AttributeId.MagicPower, 3)),
+            NewExcludedWeapon("Repair Hammer", EquipmentSlot.OneHandedWeapon, 50, profile.Name),
+            NewExcludedWeapon("Spiked Club", EquipmentSlot.OneHandedWeapon, 50, profile.Name),
             NewWeapon("Necrosis Greatsword", EquipmentSlot.TwoHandedWeapon, 50, profile.Name),
-            NewWeapon("Battle Staff", EquipmentSlot.TwoHandedWeapon, 50, profile.Name)
+            NewWeapon("Battle Staff", EquipmentSlot.TwoHandedWeapon, 50, profile.Name),
+            NewItem("Mage Amulet", EquipmentSlot.Amulet, (AttributeId.MagicPower, 2)),
+            NewItem("Mage Ring", EquipmentSlot.Ring, (AttributeId.MagicPower, 1))
         ]);
 
         GameData gameData = new()
@@ -529,7 +556,35 @@ public static class RegressionSuite
             StartingStats = baseData.StartingStats,
             CombatConfig = baseData.CombatConfig,
             Items = items,
-            AttackProfiles = baseData.AttackProfiles
+            AttackProfiles = baseData.AttackProfiles,
+            Skills = baseData.Skills
+        };
+        GameDataValidator.Validate(gameData);
+        return gameData;
+    }
+
+    // Builds a fixture where all off-hands are sheet-excluded but two-handed weapons remain usable.
+    private static GameData CreateNoOffHandTestGameData(GameData source)
+    {
+        List<Item> items = source.Items
+            .Where(item => item.Slot != EquipmentSlot.OffHand)
+            .ToList();
+        Item excludedShield = new()
+        {
+            Name = "Excluded Shield",
+            Slot = EquipmentSlot.OffHand,
+            ExcludeFromSimulation = true
+        };
+        excludedShield.AddAttribute(AttributeId.MaxHealth, 50);
+        items.Add(excludedShield);
+
+        GameData gameData = new()
+        {
+            StartingStats = source.StartingStats,
+            CombatConfig = source.CombatConfig,
+            Items = items,
+            AttackProfiles = source.AttackProfiles,
+            Skills = source.Skills
         };
         GameDataValidator.Validate(gameData);
         return gameData;
@@ -547,6 +602,41 @@ public static class RegressionSuite
                 NewStep(2, 0.5, 0.1, 0.4, 1),
                 NewStep(3, 0.5, 0.1, 0.4, 1)
             ]
+        };
+    }
+
+    // Creates enough magical damage skills for caster-analysis regression fixtures.
+    private static IReadOnlyList<SkillDefinition> CreateTestSkills()
+    {
+        return
+        [
+            NewSkill("Spark", 100, 0, 0.5, 10, 1),
+            NewSkill("Bolt", 120, 0, 0.6, 20, 2),
+            NewSkill("Flame", 140, 0, 0.7, 30, 3),
+            NewSkill("Frost", 160, 0, 0.8, 40, 4),
+            NewSkill("Arcane", 180, 0, 0.9, 50, 5),
+            NewSkill("Nova", 200, 0, 1.0, 60, 6),
+            NewSkill("Meteor", 220, 0, 1.1, 70, 7)
+        ];
+    }
+
+    // Creates one damage skill for regression fixtures.
+    private static SkillDefinition NewSkill(
+        string name,
+        double damage,
+        double attackScaling,
+        double magicScaling,
+        double manaCost,
+        double cooldown)
+    {
+        return new SkillDefinition
+        {
+            Name = name,
+            Damage = damage,
+            AttackScaling = attackScaling,
+            MagicScaling = magicScaling,
+            ManaCost = manaCost,
+            Cooldown = cooldown
         };
     }
 
@@ -578,7 +668,12 @@ public static class RegressionSuite
         double criticalChance = 0,
         double criticalDamage = 0,
         double healthRegen = 0,
-        double lifeSteal = 0)
+        double lifeSteal = 0,
+        double magicPower = 100,
+        double maxMana = 500,
+        double manaRegen = 10,
+        double cooldownReduction = 0.20,
+        double manaEfficiency = 0)
     {
         CharacterStatsBuilder builder = new();
         builder.Set(AttributeId.AttackPower, attackPower);
@@ -590,6 +685,11 @@ public static class RegressionSuite
         builder.Set(AttributeId.CriticalDamage, criticalDamage);
         builder.Set(AttributeId.HealthRegen, healthRegen);
         builder.Set(AttributeId.LifeSteal, lifeSteal);
+        builder.Set(AttributeId.MagicPower, magicPower);
+        builder.Set(AttributeId.MaxMana, maxMana);
+        builder.Set(AttributeId.ManaRegen, manaRegen);
+        builder.Set(AttributeId.CooldownReduction, cooldownReduction);
+        builder.Set(AttributeId.ManaEfficiency, manaEfficiency);
         return builder.Build();
     }
 
@@ -611,9 +711,16 @@ public static class RegressionSuite
         EquipmentSlot slot,
         string setName,
         AttributeId attribute,
-        double value)
+        double value,
+        bool excludeFromSimulation = false)
     {
-        Item item = new() { Name = name, Slot = slot, ArmorSetName = setName };
+        Item item = new()
+        {
+            Name = name,
+            Slot = slot,
+            ArmorSetName = setName,
+            ExcludeFromSimulation = excludeFromSimulation
+        };
         item.AddAttribute(attribute, value);
         return item;
     }
@@ -623,9 +730,30 @@ public static class RegressionSuite
         string name,
         EquipmentSlot slot,
         double weaponDamage,
-        string? profileName)
+        string? profileName,
+        params (AttributeId Attribute, double Value)[] extraAttributes)
     {
         Item item = NewItem(name, slot, (AttributeId.WeaponDamage, weaponDamage));
+        foreach ((AttributeId attribute, double value) in extraAttributes)
+            item.AddAttribute(attribute, value);
+        item.AttackProfileName = profileName;
+        return item;
+    }
+
+    // Creates a weapon marked unavailable for simulation fixtures.
+    private static Item NewExcludedWeapon(
+        string name,
+        EquipmentSlot slot,
+        double weaponDamage,
+        string? profileName)
+    {
+        Item item = new()
+        {
+            Name = name,
+            Slot = slot,
+            ExcludeFromSimulation = true
+        };
+        item.AddAttribute(AttributeId.WeaponDamage, weaponDamage);
         item.AttackProfileName = profileName;
         return item;
     }
@@ -656,7 +784,9 @@ public static class RegressionSuite
     private static CombatConfig DefaultConfig() => new()
     {
         AttackPowerMultiplier = 0.5,
-        PhysicalArmorConstant = 0.005
+        PhysicalArmorConstant = 0.005,
+        MagicalArmorConstant = 0.005,
+        SkillSlots = 7
     };
 
     // Runs one named check and prints a compact success line.

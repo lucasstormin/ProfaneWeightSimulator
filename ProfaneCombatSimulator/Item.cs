@@ -9,6 +9,7 @@ public sealed class Item
     public required EquipmentSlot Slot { get; init; }
     public string? AttackProfileName { get; set; }
     public string? ArmorSetName { get; init; }
+    public bool ExcludeFromSimulation { get; init; }
     private readonly Dictionary<AttributeId, double> attributes = [];
 
     public IReadOnlyDictionary<AttributeId, double> Attributes => attributes;

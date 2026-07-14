@@ -35,8 +35,17 @@ public static class GameDataValidator
             throw new InvalidDataException("Attack Power multiplier must be positive.");
         if (gameData.CombatConfig.PhysicalArmorConstant <= 0)
             throw new InvalidDataException("Physical Armor constant must be positive.");
+        if (gameData.CombatConfig.MagicalArmorConstant <= 0)
+            throw new InvalidDataException("Magical Armor constant must be positive.");
+        if (gameData.CombatConfig.SkillSlots <= 0)
+            throw new InvalidDataException("Skill slots must be positive.");
         if (gameData.Items.Count == 0)
             throw new InvalidDataException("The spreadsheet contains no importable items.");
+        if (gameData.Skills.Count(skill => skill.IsMagicalOnly) < gameData.CombatConfig.SkillSlots)
+        {
+            throw new InvalidDataException(
+                $"At least {gameData.CombatConfig.SkillSlots} non-ignored magical skills are required for caster analysis.");
+        }
 
         string[] duplicateNames = gameData.Items
             .GroupBy(item => item.Name, StringComparer.OrdinalIgnoreCase)
@@ -99,6 +108,16 @@ public static class GameDataValidator
             {
                 throw new InvalidDataException($"Profile '{profile.Name}' contains invalid timing or multiplier values.");
             }
+        }
+
+        foreach (SkillDefinition skill in gameData.Skills)
+        {
+            if (string.IsNullOrWhiteSpace(skill.Name))
+                throw new InvalidDataException("A skill has no name.");
+            if (skill.Damage <= 0 || skill.ManaCost < 0 || skill.Cooldown < 0)
+                throw new InvalidDataException($"Skill '{skill.Name}' contains invalid damage, mana, or cooldown values.");
+            if (skill.AttackScaling < 0 || skill.MagicScaling < 0)
+                throw new InvalidDataException($"Skill '{skill.Name}' contains a negative scaling value.");
         }
 
         foreach (Item item in gameData.Items)

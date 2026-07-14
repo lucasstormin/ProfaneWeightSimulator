@@ -5,4 +5,6 @@ public sealed class CombatConfig
 {
     public required double AttackPowerMultiplier { get; init; }
     public required double PhysicalArmorConstant { get; init; }
+    public required double MagicalArmorConstant { get; init; }
+    public required int SkillSlots { get; init; }
 }

@@ -32,29 +32,55 @@ int eligibleWeapons = gameData.Items.Count(item =>
 Console.WriteLine($"Source: {(usedCache ? "local cache" : "Google Sheets")}");
 Console.WriteLine($"Imported items: {gameData.Items.Count}");
 Console.WriteLine($"Imported attack profiles: {gameData.AttackProfiles.Count}");
+Console.WriteLine($"Imported skills: {gameData.Skills.Count}");
 Console.WriteLine($"Eligible non-bow weapons: {eligibleWeapons}");
 while (true)
 {
     int fights = ReadSimulationCount(defaultFights);
     LoadoutGenerationMode generationMode = ReadGenerationMode();
-    TailoredLoadoutSettings? tailoredSettings = generationMode == LoadoutGenerationMode.Tailored
-        ? ReadTailoredSettings(gameData)
-        : null;
+    AnalysisType analysisType = ReadAnalysisType();
+    double combatWindowSeconds = analysisType == AnalysisType.SkillOutput
+        ? ReadCombatWindowSeconds()
+        : 0;
     Console.WriteLine($"Loadout mode: {DescribeGenerationMode(generationMode)}");
-    Console.WriteLine($"Analyzing {fights:N0} valid time-based loadouts...");
+    Console.WriteLine($"Analysis type: {DescribeAnalysisType(analysisType)}");
+    if (analysisType == AnalysisType.SkillOutput)
+        Console.WriteLine($"Combat window: {combatWindowSeconds:F2} seconds");
+    Console.WriteLine($"Analyzing {fights:N0} valid loadouts...");
     Console.WriteLine();
 
-    SimulationAnalysisResult result =
-        TimeBasedAnalysisRunner.Analyze(gameData, fights, randomSeed, generationMode, tailoredSettings);
-    PrintReport(result);
-    if (generationMode == LoadoutGenerationMode.Tailored)
-        PrintTailoredExclusions(gameData, tailoredSettings ?? TailoredLoadoutSettings.CreateDefault());
+    bool runAgain;
+    if (analysisType == AnalysisType.BasicAttackDuel)
+    {
+        SimulationAnalysisResult result =
+            TimeBasedAnalysisRunner.Analyze(gameData, fights, randomSeed, generationMode);
+        PrintReport(result);
+        PrintSheetExclusions(gameData);
 
-    if (Console.IsInputRedirected)
-        break;
+        if (Console.IsInputRedirected)
+            break;
 
-    bool runAgain = HandlePostSimulationMenu(result);
-    result = null!;
+        runAgain = HandlePostSimulationMenu(result);
+        result = null!;
+    }
+    else
+    {
+        SkillOutputAnalysisResult result = SkillOutputAnalysisRunner.Analyze(
+            gameData,
+            fights,
+            randomSeed,
+            generationMode,
+            combatWindowSeconds);
+        PrintSkillOutputReport(result);
+        PrintSheetExclusions(gameData);
+
+        if (Console.IsInputRedirected)
+            break;
+
+        runAgain = HandlePostSkillSimulationMenu();
+        result = null!;
+    }
+
     if (!runAgain)
         break;
 
@@ -129,6 +155,70 @@ static void PrintReport(SimulationAnalysisResult result)
     Console.WriteLine("Health Regen/AP agreement: Fights where +1 HP/second and its calculated AP equivalent had the same outcome.");
     Console.WriteLine("Life Steal/AP agreement: Fights where +1 percentage point and its calculated AP equivalent had the same outcome.");
     Console.WriteLine("* Critical Damage uses only builds with at least 10% Critical Chance.");
+}
+
+// Prints the Magic-Power-based skill-output report for caster/resource stats.
+static void PrintSkillOutputReport(SkillOutputAnalysisResult result)
+{
+    Console.WriteLine("CASTER ATTRIBUTE WEIGHT REPORT");
+    Console.WriteLine("==============================");
+    Console.WriteLine("Base weight: 1 Magic Power = 1.0000 caster item-power unit");
+    Console.WriteLine($"Skill slots: {result.SkillSlots}");
+    Console.WriteLine($"Eligible magical skills: {result.EligibleSkills}");
+    Console.WriteLine(
+        $"Cooldown Reduction eligible samples: {result.CooldownReductionEligibleSamples:N0} " +
+        $"of {result.Simulations:N0} (>10% existing CDR)");
+    Console.WriteLine($"Average smooth output: {result.AverageBaseOutput:F2} damage over {result.CombatWindowSeconds:F2}s");
+    Console.WriteLine();
+    Console.WriteLine($"{"Attribute",-30} {"Recommended Weight",20} {"Typical Range",22} {"Variation",18}");
+    Console.WriteLine(new string('-', 94));
+    Console.WriteLine($"{"Magic Power",-30} {1.0,20:F4} {"Fixed",22} {"None",18}");
+    PrintCasterSummaryRow(result.CooldownReduction);
+    PrintCasterSummaryRow(result.MagicResist);
+    PrintCasterSummaryRow(result.MaxMana);
+    PrintCasterSummaryRow(result.ManaRegen);
+    PrintCasterSummaryRow(result.ManaEfficiency);
+    Console.WriteLine();
+
+    Console.WriteLine("CASTER ATTRIBUTE WEIGHT DETAILS");
+    Console.WriteLine("===============================");
+    PrintCasterDetails(result.CooldownReduction);
+    PrintCasterDetails(result.MagicResist);
+    PrintCasterDetails(result.MaxMana);
+    PrintCasterDetails(result.ManaRegen);
+    PrintCasterDetails(result.ManaEfficiency);
+    Console.WriteLine();
+
+    Console.WriteLine("LEGEND");
+    Console.WriteLine("======");
+    Console.WriteLine("Weights are relative to Magic Power, not Attack Power.");
+    Console.WriteLine("Caster recommendations use priority-based smooth output estimates to avoid one-extra-cast breakpoints.");
+    Console.WriteLine("Magic Power and CDR are valued as throughput; mana stats are valued by extra resource-limited output.");
+    Console.WriteLine("Median is used as the recommended caster balance-sheet weight.");
+    Console.WriteLine("Typical Range is the middle 90% of sampled caster loadouts.");
+    Console.WriteLine("Variation shows how context-dependent that caster stat is.");
+    Console.WriteLine("Magic Resist is valued by magical damage prevented, relative to Magic Power output gained.");
+    Console.WriteLine("* Cooldown Reduction uses only caster builds with more than 10% existing CDR.");
+}
+
+// Prints one contextual caster attribute in the scalable summary table.
+static void PrintCasterSummaryRow(CasterAttributeWeightDistributionResult distribution)
+{
+    string range = $"{distribution.FifthPercentile:F4}–{distribution.NinetyFifthPercentile:F4}";
+    double variationPercent = distribution.MeanWeight == 0
+        ? 0
+        : distribution.StandardDeviation / distribution.MeanWeight * 100;
+    string variation = $"{ClassifyVariation(variationPercent)} ({variationPercent:F1}%)";
+    Console.WriteLine($"{distribution.DisplayName,-30} {distribution.RecommendedWeight,20:F4} {range,22} {variation,18}");
+}
+
+// Prints compact distribution diagnostics for one caster attribute.
+static void PrintCasterDetails(CasterAttributeWeightDistributionResult distribution)
+{
+    Console.WriteLine(
+        $"{distribution.DisplayName}: mean {distribution.MeanWeight:F4} | " +
+        $"median {distribution.MedianWeight:F4} | SD {distribution.StandardDeviation:F4} | " +
+        $"observed {distribution.MinimumWeight:F4}–{distribution.MaximumWeight:F4}");
 }
 
 // Prints one contextual attribute in the scalable summary table.
@@ -368,6 +458,25 @@ static bool HandlePostSimulationMenu(SimulationAnalysisResult result)
     }
 }
 
+// Offers a fully reconfigured repeat run after skill-output analysis.
+static bool HandlePostSkillSimulationMenu()
+{
+    while (true)
+    {
+        Console.WriteLine();
+        Console.Write("Press R to run another simulation, or any other key to exit: ");
+        ConsoleKeyInfo key = Console.ReadKey(intercept: true);
+        if (key.Key == ConsoleKey.R)
+        {
+            Console.WriteLine("R");
+            return true;
+        }
+
+        Console.WriteLine();
+        return false;
+    }
+}
+
 // Prompts interactive users for a loadout policy while keeping automated runs non-blocking.
 static LoadoutGenerationMode ReadGenerationMode()
 {
@@ -379,7 +488,6 @@ static LoadoutGenerationMode ReadGenerationMode()
         Console.WriteLine();
         Console.WriteLine("Press 1 to simulate allowing random pieces.");
         Console.WriteLine("Press 2 to simulate with set restriction.");
-        Console.WriteLine("Press 3 to simulate tailored mode.");
         ConsoleKeyInfo key = Console.ReadKey(intercept: true);
         if (key.KeyChar == '1')
         {
@@ -391,35 +499,55 @@ static LoadoutGenerationMode ReadGenerationMode()
             Console.WriteLine("2");
             return LoadoutGenerationMode.ClosedArmorSet;
         }
-        if (key.KeyChar == '3')
-        {
-            Console.WriteLine("3");
-            return LoadoutGenerationMode.Tailored;
-        }
     }
 }
 
-// Reads Tailored-mode exclusions, using the original curated list when the user presses Enter.
-static TailoredLoadoutSettings ReadTailoredSettings(GameData gameData)
+// Prompts interactive users for the combat model while keeping automated runs non-blocking.
+static AnalysisType ReadAnalysisType()
 {
     if (Console.IsInputRedirected)
-        return TailoredLoadoutSettings.CreateDefault();
+        return AnalysisType.BasicAttackDuel;
 
     while (true)
     {
         Console.WriteLine();
-        Console.WriteLine("Tailored exclusions:");
-        Console.WriteLine("Press Enter for default Tailored mode.");
-        Console.WriteLine("Or type exclusions separated by commas, e.g. Silk set, Web set, improvised weapons, staves.");
-        Console.Write("> ");
+        Console.WriteLine("Press 1 to run basic attack duel simulation.");
+        Console.WriteLine("Press 2 to run skill output simulation.");
+        ConsoleKeyInfo key = Console.ReadKey(intercept: true);
+        if (key.KeyChar == '1')
+        {
+            Console.WriteLine("1");
+            return AnalysisType.BasicAttackDuel;
+        }
+        if (key.KeyChar == '2')
+        {
+            Console.WriteLine("2");
+            return AnalysisType.SkillOutput;
+        }
+    }
+}
+
+// Reads the caster-output combat window in seconds.
+static double ReadCombatWindowSeconds()
+{
+    const double defaultWindow = 45;
+    if (Console.IsInputRedirected)
+        return defaultWindow;
+
+    while (true)
+    {
+        Console.WriteLine();
+        Console.Write($"Combat window in seconds [{defaultWindow:F0}]: ");
         string input = Console.ReadLine() ?? string.Empty;
         if (string.IsNullOrWhiteSpace(input))
-            return TailoredLoadoutSettings.CreateDefault();
+            return defaultWindow;
+        if (double.TryParse(input, NumberStyles.Float, CultureInfo.InvariantCulture, out double seconds) &&
+            seconds > 0)
+        {
+            return seconds;
+        }
 
-        if (TailoredLoadoutSettings.TryParse(input, gameData, out TailoredLoadoutSettings? settings, out string error))
-            return settings!;
-
-        Console.WriteLine(error);
+        Console.WriteLine("Enter a positive number of seconds.");
     }
 }
 
@@ -428,26 +556,38 @@ static string DescribeGenerationMode(LoadoutGenerationMode mode) => mode switch
 {
     LoadoutGenerationMode.RandomPieces => "Random armor pieces",
     LoadoutGenerationMode.ClosedArmorSet => "Closed armor sets",
-    LoadoutGenerationMode.Tailored => "Tailored item pool",
     _ => throw new ArgumentOutOfRangeException(nameof(mode))
 };
 
-// Prints the curated item exclusions used by Tailored mode without listing every armor piece.
-static void PrintTailoredExclusions(GameData gameData, TailoredLoadoutSettings settings)
+// Converts the selected analysis model into a concise report label.
+static string DescribeAnalysisType(AnalysisType analysisType) => analysisType switch
 {
-    string[] excludedWeapons = gameData.Items
-        .Where(item => item.Slot is EquipmentSlot.OneHandedWeapon or EquipmentSlot.TwoHandedWeapon)
-        .Where(item => TailoredLoadoutRules.IsExcludedWeapon(item, settings))
+    AnalysisType.BasicAttackDuel => "Basic attack duel",
+    AnalysisType.SkillOutput => "Skill output",
+    _ => throw new ArgumentOutOfRangeException(nameof(analysisType))
+};
+
+// Prints sheet-controlled exclusions that are removed from every simulation mode.
+static void PrintSheetExclusions(GameData gameData)
+{
+    string[] sheetExcludedArmorSets = gameData.Items
+        .Where(item => item.ArmorSetName is not null && item.ExcludeFromSimulation)
+        .Select(item => item.ArmorSetName!)
+        .Distinct(StringComparer.OrdinalIgnoreCase)
+        .Order(StringComparer.OrdinalIgnoreCase)
+        .ToArray();
+    string[] sheetExcludedItems = gameData.Items
+        .Where(item => item.ArmorSetName is null && item.ExcludeFromSimulation)
         .Select(item => item.Name)
         .Distinct(StringComparer.OrdinalIgnoreCase)
         .Order(StringComparer.OrdinalIgnoreCase)
         .ToArray();
 
     Console.WriteLine();
-    Console.WriteLine("TAILORED MODE EXCLUSIONS");
-    Console.WriteLine("========================");
-    Console.WriteLine($"Excluded armor sets: {FormatList(settings.ExcludedArmorSets.Order(StringComparer.OrdinalIgnoreCase))}");
-    Console.WriteLine($"Excluded weapons: {FormatList(excludedWeapons)}");
+    Console.WriteLine("SHEET EXCLUSIONS");
+    Console.WriteLine("================");
+    Console.WriteLine($"Sheet-excluded armor sets: {FormatList(sheetExcludedArmorSets)}");
+    Console.WriteLine($"Sheet-excluded items: {FormatList(sheetExcludedItems)}");
 }
 
 // Formats empty and populated report lists in a compact, readable way.

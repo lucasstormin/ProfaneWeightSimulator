@@ -18,7 +18,7 @@ public sealed class LoadoutGenerator
 
     // Indexes eligible equipment and initializes the reproducible random sequence.
     public LoadoutGenerator(GameData gameData, int seed)
-        : this(gameData, seed, LoadoutGenerationMode.RandomPieces, 0, null)
+        : this(gameData, seed, LoadoutGenerationMode.RandomPieces, 0)
     {
     }
 
@@ -27,30 +27,27 @@ public sealed class LoadoutGenerator
         GameData gameData,
         int seed,
         LoadoutGenerationMode mode,
-        int expectedLoadouts,
-        TailoredLoadoutSettings? tailoredSettings = null)
+        int expectedLoadouts)
     {
         startingStats = gameData.StartingStats;
         attackProfiles = gameData.AttackProfiles;
         this.mode = mode;
         random = new Random(seed);
-        TailoredLoadoutSettings selectedTailoredSettings =
-            tailoredSettings ?? TailoredLoadoutSettings.CreateDefault();
-        Item[] eligibleItems = mode == LoadoutGenerationMode.Tailored
-            ? gameData.Items
-                .Where(item => TailoredLoadoutRules.IsEligible(item, selectedTailoredSettings))
-                .ToArray()
-            : gameData.Items.ToArray();
+        Item[] eligibleItems = gameData.Items
+            .Where(item => !item.ExcludeFromSimulation)
+            .ToArray();
 
         itemsBySlot = eligibleItems
             .GroupBy(item => item.Slot)
             .ToDictionary(group => group.Key, group => group.ToArray());
+        bool hasEligibleOffHands = itemsBySlot.ContainsKey(EquipmentSlot.OffHand);
         weapons = eligibleItems
             .Where(item =>
                 (item.Slot is EquipmentSlot.OneHandedWeapon or EquipmentSlot.TwoHandedWeapon) &&
-                !item.IsBow)
+                !item.IsBow &&
+                (item.Slot != EquipmentSlot.OneHandedWeapon || hasEligibleOffHands))
             .ToArray();
-        armorSets = gameData.Items
+        armorSets = eligibleItems
             .Where(item => item.ArmorSetName is not null)
             .GroupBy(item => item.ArmorSetName!, StringComparer.OrdinalIgnoreCase)
             .ToDictionary(
@@ -64,8 +61,8 @@ public sealed class LoadoutGenerator
         foreach (EquipmentSlot slot in new[]
         {
             EquipmentSlot.Helmet, EquipmentSlot.Chest, EquipmentSlot.Gloves,
-            EquipmentSlot.Leggings, EquipmentSlot.Greaves, EquipmentSlot.OffHand,
-            EquipmentSlot.Amulet, EquipmentSlot.Ring
+            EquipmentSlot.Leggings, EquipmentSlot.Greaves, EquipmentSlot.Amulet,
+            EquipmentSlot.Ring
         })
         {
             if (!itemsBySlot.ContainsKey(slot))

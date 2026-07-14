@@ -22,11 +22,19 @@ public static partial class GameSheetParser
         startingStats.Set(AttributeId.CriticalDamage, FindMinimum(caps, AttributeId.CriticalDamage));
         startingStats.Set(AttributeId.HealthRegen, FindMinimum(caps, AttributeId.HealthRegen));
         startingStats.Set(AttributeId.LifeSteal, FindMinimum(caps, AttributeId.LifeSteal));
+        startingStats.Set(AttributeId.MagicPower, FindMinimum(caps, AttributeId.MagicPower));
+        startingStats.Set(AttributeId.MagicResist, FindMinimum(caps, AttributeId.MagicResist));
+        startingStats.Set(AttributeId.MaxMana, FindMinimum(caps, AttributeId.MaxMana));
+        startingStats.Set(AttributeId.ManaRegen, FindMinimum(caps, AttributeId.ManaRegen));
+        startingStats.Set(AttributeId.CooldownReduction, FindMinimum(caps, AttributeId.CooldownReduction));
+        startingStats.Set(AttributeId.ManaEfficiency, FindMinimum(caps, AttributeId.ManaEfficiency));
 
         CombatConfig config = new()
         {
             AttackPowerMultiplier = FindSetting(combat, "AttackPowerMultiplier"),
-            PhysicalArmorConstant = FindSetting(combat, "Physical Armor Constant")
+            PhysicalArmorConstant = FindSetting(combat, "Physical Armor Constant"),
+            MagicalArmorConstant = FindSetting(combat, "Magical Armor Constant"),
+            SkillSlots = (int)FindSetting(combat, "Skill slots")
         };
 
         IReadOnlyDictionary<string, WeaponAttackProfile> attackProfiles =
@@ -36,13 +44,15 @@ public static partial class GameSheetParser
         items.AddRange(ParseArmor(workbook.Sheet("Sets (armors) lists and attribu")));
         items.AddRange(ParseAccessories(workbook.Sheet("Accessories lists and attribute")));
         items.AddRange(ParseWeapons(workbook.Sheet("Weapons lists and attributes")));
+        IReadOnlyList<SkillDefinition> skills = ParseSkills(workbook.Sheet("Skill information"));
 
         GameData gameData = new()
         {
             StartingStats = startingStats.Build(),
             CombatConfig = config,
             Items = items,
-            AttackProfiles = attackProfiles
+            AttackProfiles = attackProfiles,
+            Skills = skills
         };
 
         GameDataValidator.Validate(gameData);
@@ -65,13 +75,14 @@ public static partial class GameSheetParser
             if (firstColumn?.Contains("Valor do cap", StringComparison.OrdinalIgnoreCase) == true &&
                 !string.IsNullOrWhiteSpace(itemFamily))
             {
+                bool excludeFromSimulation = IsTrue(sheet.Text(row, 12));
                 currentItems =
                 [
-                    NewItem(sheet.Text(row, 5), EquipmentSlot.Helmet, itemFamily),
-                    NewItem(sheet.Text(row, 6), EquipmentSlot.Chest, itemFamily),
-                    NewItem(sheet.Text(row, 7), EquipmentSlot.Gloves, itemFamily),
-                    NewItem(sheet.Text(row, 8), EquipmentSlot.Leggings, itemFamily),
-                    NewItem(sheet.Text(row, 9), EquipmentSlot.Greaves, itemFamily)
+                    NewItem(sheet.Text(row, 5), EquipmentSlot.Helmet, itemFamily, excludeFromSimulation),
+                    NewItem(sheet.Text(row, 6), EquipmentSlot.Chest, itemFamily, excludeFromSimulation),
+                    NewItem(sheet.Text(row, 7), EquipmentSlot.Gloves, itemFamily, excludeFromSimulation),
+                    NewItem(sheet.Text(row, 8), EquipmentSlot.Leggings, itemFamily, excludeFromSimulation),
+                    NewItem(sheet.Text(row, 9), EquipmentSlot.Greaves, itemFamily, excludeFromSimulation)
                 ];
                 items.AddRange(currentItems);
                 continue;
@@ -119,7 +130,7 @@ public static partial class GameSheetParser
                 sheet.Text(row, 2)?.Contains("Rela", StringComparison.OrdinalIgnoreCase) == true &&
                 !string.IsNullOrWhiteSpace(firstColumn))
             {
-                currentItem = NewItem(firstColumn, section.Value);
+                currentItem = NewItem(firstColumn, section.Value, excludeFromSimulation: IsTrue(sheet.Text(row, 5)));
                 items.Add(currentItem);
                 continue;
             }
@@ -159,7 +170,7 @@ public static partial class GameSheetParser
                 secondColumn?.Contains("Rela", StringComparison.OrdinalIgnoreCase) == true &&
                 !string.IsNullOrWhiteSpace(firstColumn))
             {
-                currentItem = NewItem(firstColumn, section.Value);
+                currentItem = NewItem(firstColumn, section.Value, excludeFromSimulation: IsTrue(sheet.Text(row, 6)));
                 TryAssignAttackProfile(currentItem, sheet.Text(row, 5));
                 items.Add(currentItem);
                 continue;
@@ -221,6 +232,38 @@ public static partial class GameSheetParser
             StringComparer.OrdinalIgnoreCase);
     }
 
+    // Imports usable damage skills while preserving physical/magical scaling metadata.
+    private static IReadOnlyList<SkillDefinition> ParseSkills(WorksheetData sheet)
+    {
+        List<SkillDefinition> skills = [];
+        for (int row = 3; row <= sheet.MaximumRow; row++)
+        {
+            string? name = sheet.Text(row, 1)?.Trim();
+            if (string.IsNullOrWhiteSpace(name) || IsIgnoredSkill(sheet.Text(row, 7)))
+                continue;
+
+            double? damage = sheet.Number(row, 2);
+            double attackScaling = OptionalNumber(sheet, row, 3);
+            double magicScaling = OptionalNumber(sheet, row, 4);
+            double? manaCost = sheet.Number(row, 5);
+            double? cooldown = sheet.Number(row, 6);
+            if (!damage.HasValue || !manaCost.HasValue || !cooldown.HasValue)
+                continue;
+
+            skills.Add(new SkillDefinition
+            {
+                Name = name,
+                Damage = damage.Value,
+                AttackScaling = attackScaling,
+                MagicScaling = magicScaling,
+                ManaCost = manaCost.Value,
+                Cooldown = cooldown.Value
+            });
+        }
+
+        return skills;
+    }
+
     // Applies spreadsheet rounding metadata before storing an item attribute.
     private static void AddImportedAttribute(Item item, AttributeId attribute, double value)
     {
@@ -247,7 +290,11 @@ public static partial class GameSheetParser
     }
 
     // Creates an item and rejects unnamed spreadsheet blocks.
-    private static Item NewItem(string? name, EquipmentSlot slot, string? armorSetName = null)
+    private static Item NewItem(
+        string? name,
+        EquipmentSlot slot,
+        string? armorSetName = null,
+        bool excludeFromSimulation = false)
     {
         if (string.IsNullOrWhiteSpace(name))
             throw new InvalidDataException($"An item in slot '{slot}' has no name.");
@@ -255,7 +302,8 @@ public static partial class GameSheetParser
         {
             Name = name.Trim(),
             Slot = slot,
-            ArmorSetName = string.IsNullOrWhiteSpace(armorSetName) ? null : armorSetName.Trim()
+            ArmorSetName = string.IsNullOrWhiteSpace(armorSetName) ? null : armorSetName.Trim(),
+            ExcludeFromSimulation = excludeFromSimulation
         };
     }
 
@@ -280,11 +328,32 @@ public static partial class GameSheetParser
     {
         for (int row = 1; row <= sheet.MaximumRow; row++)
         {
-            if (string.Equals(sheet.Text(row, 1)?.Trim(), settingName, StringComparison.OrdinalIgnoreCase))
+            string? label = sheet.Text(row, 1)?.Trim();
+            if (label is not null &&
+                (string.Equals(label, settingName, StringComparison.OrdinalIgnoreCase) ||
+                label.StartsWith($"{settingName} ", StringComparison.OrdinalIgnoreCase)))
+            {
                 return sheet.Number(row, 2) ?? throw new InvalidDataException($"'{settingName}' has no numeric value.");
+            }
         }
 
         throw new InvalidDataException($"Combat setting '{settingName}' was not found.");
+    }
+
+    // Reads optional numeric cells, treating nonnumeric placeholders as zero.
+    private static double OptionalNumber(WorksheetData sheet, int row, int column) =>
+        sheet.Number(row, column) ?? 0;
+
+    // Reads the spreadsheet's checkbox export for skills excluded from simulation.
+    private static bool IsIgnoredSkill(string? value) =>
+        bool.TryParse(value, out bool ignored) && ignored;
+
+    // Reads spreadsheet checkbox exports that mark entries unavailable for simulation sampling.
+    private static bool IsTrue(string? value)
+    {
+        if (bool.TryParse(value, out bool result))
+            return result;
+        return string.Equals(value?.Trim(), "1", StringComparison.OrdinalIgnoreCase);
     }
 
     // Reads a required numeric profile cell and reports its exact location when missing.

@@ -4,6 +4,5 @@ namespace CombatSimulator.Analysis;
 public enum LoadoutGenerationMode
 {
     RandomPieces,
-    ClosedArmorSet,
-    Tailored
+    ClosedArmorSet
 }
