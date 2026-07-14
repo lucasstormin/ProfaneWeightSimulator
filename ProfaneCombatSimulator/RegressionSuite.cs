@@ -16,6 +16,7 @@ public static class RegressionSuite
         RunCheck("Two-handed loadouts exclude off-hands and bows", TestTwoHandedLoadout);
         RunCheck("Random mode permits mixed armor sets", TestRandomArmorGeneration);
         RunCheck("Closed-set mode is complete and evenly distributed", TestClosedSetGeneration);
+        RunCheck("Tailored mode excludes curated sets and weapons", TestTailoredGeneration);
         RunCheck("Incomplete armor sets are rejected", TestIncompleteArmorSet);
         RunCheck("Attack Speed scales contact timing", TestAttackSpeedTiming);
         RunCheck("Combo order repeats 1-2-3", TestComboOrder);
@@ -162,6 +163,32 @@ public static class RegressionSuite
         if (sets.Length != 1)
             throw new Exception("A closed-set loadout mixed armor sets.");
         return sets[0];
+    }
+
+    // Confirms Tailored generation removes only the requested curated sets and weapons.
+    private static void TestTailoredGeneration()
+    {
+        LoadoutGenerator generator = new(
+            CreateTailoredTestGameData(), 31, LoadoutGenerationMode.Tailored, 0);
+        Loadout[] loadouts = Enumerable.Range(0, 100)
+            .Select(_ => generator.Generate())
+            .ToArray();
+
+        if (loadouts.Any(loadout => loadout.Items.Any(item =>
+                item.ArmorSetName is not null &&
+                TailoredLoadoutRules.ExcludedArmorSets.Contains(
+                    item.ArmorSetName,
+                    StringComparer.OrdinalIgnoreCase))))
+        {
+            throw new Exception("Tailored generation equipped an excluded armor set.");
+        }
+
+        if (loadouts.Any(loadout => loadout.Items.Any(item =>
+                item.Slot is EquipmentSlot.OneHandedWeapon or EquipmentSlot.TwoHandedWeapon &&
+                TailoredLoadoutRules.IsExcludedWeapon(item))))
+        {
+            throw new Exception("Tailored generation equipped an excluded weapon.");
+        }
     }
 
     // Confirms malformed sheet data cannot silently produce partial closed sets.
@@ -442,6 +469,37 @@ public static class RegressionSuite
             {
                 [profile.Name] = profile
             }
+        };
+        GameDataValidator.Validate(gameData);
+        return gameData;
+    }
+
+    // Builds a fixture with excluded Tailored equipment alongside valid remaining choices.
+    private static GameData CreateTailoredTestGameData()
+    {
+        GameData baseData = CreateTestGameData();
+        WeaponAttackProfile profile = baseData.AttackProfiles.Values.Single();
+        List<Item> items = baseData.Items.ToList();
+        items.AddRange(
+        [
+            NewArmor("Silk Helmet", EquipmentSlot.Helmet, "Silk", AttributeId.MaxHealth, 1),
+            NewArmor("Silk Chest", EquipmentSlot.Chest, "Silk", AttributeId.MaxHealth, 1),
+            NewArmor("Silk Gloves", EquipmentSlot.Gloves, "Silk", AttributeId.MaxHealth, 1),
+            NewArmor("Silk Leggings", EquipmentSlot.Leggings, "Silk", AttributeId.MaxHealth, 1),
+            NewArmor("Silk Greaves", EquipmentSlot.Greaves, "Silk", AttributeId.MaxHealth, 1),
+            NewWeapon("Improvised Axe", EquipmentSlot.OneHandedWeapon, 50, profile.Name),
+            NewWeapon("Repair Hammer", EquipmentSlot.OneHandedWeapon, 50, profile.Name),
+            NewWeapon("Spiked Club", EquipmentSlot.OneHandedWeapon, 50, profile.Name),
+            NewWeapon("Necrosis Greatsword", EquipmentSlot.TwoHandedWeapon, 50, profile.Name),
+            NewWeapon("Battle Staff", EquipmentSlot.TwoHandedWeapon, 50, profile.Name)
+        ]);
+
+        GameData gameData = new()
+        {
+            StartingStats = baseData.StartingStats,
+            CombatConfig = baseData.CombatConfig,
+            Items = items,
+            AttackProfiles = baseData.AttackProfiles
         };
         GameDataValidator.Validate(gameData);
         return gameData;

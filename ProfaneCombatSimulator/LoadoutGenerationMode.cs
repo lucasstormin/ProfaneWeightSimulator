@@ -1,8 +1,9 @@
 namespace CombatSimulator.Analysis;
 
-// Selects whether armor slots may mix freely or must use one complete set.
+// Selects the loadout population used when sampling combatants for weight analysis.
 public enum LoadoutGenerationMode
 {
     RandomPieces,
-    ClosedArmorSet
+    ClosedArmorSet,
+    Tailored
 }

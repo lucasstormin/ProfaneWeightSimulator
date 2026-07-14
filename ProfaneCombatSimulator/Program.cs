@@ -44,6 +44,8 @@ while (true)
     SimulationAnalysisResult result =
         TimeBasedAnalysisRunner.Analyze(gameData, fights, randomSeed, generationMode);
     PrintReport(result);
+    if (generationMode == LoadoutGenerationMode.Tailored)
+        PrintTailoredExclusions(gameData);
 
     if (Console.IsInputRedirected)
         break;
@@ -374,6 +376,7 @@ static LoadoutGenerationMode ReadGenerationMode()
         Console.WriteLine();
         Console.WriteLine("Press 1 to simulate allowing random pieces.");
         Console.WriteLine("Press 2 to simulate with set restriction.");
+        Console.WriteLine("Press 3 to simulate tailored mode.");
         ConsoleKeyInfo key = Console.ReadKey(intercept: true);
         if (key.KeyChar == '1')
         {
@@ -385,6 +388,11 @@ static LoadoutGenerationMode ReadGenerationMode()
             Console.WriteLine("2");
             return LoadoutGenerationMode.ClosedArmorSet;
         }
+        if (key.KeyChar == '3')
+        {
+            Console.WriteLine("3");
+            return LoadoutGenerationMode.Tailored;
+        }
     }
 }
 
@@ -393,8 +401,27 @@ static string DescribeGenerationMode(LoadoutGenerationMode mode) => mode switch
 {
     LoadoutGenerationMode.RandomPieces => "Random armor pieces",
     LoadoutGenerationMode.ClosedArmorSet => "Closed armor sets",
+    LoadoutGenerationMode.Tailored => "Tailored item pool",
     _ => throw new ArgumentOutOfRangeException(nameof(mode))
 };
+
+// Prints the curated item exclusions used by Tailored mode without listing every armor piece.
+static void PrintTailoredExclusions(GameData gameData)
+{
+    string[] excludedWeapons = gameData.Items
+        .Where(item => item.Slot is EquipmentSlot.OneHandedWeapon or EquipmentSlot.TwoHandedWeapon)
+        .Where(TailoredLoadoutRules.IsExcludedWeapon)
+        .Select(item => item.Name)
+        .Distinct(StringComparer.OrdinalIgnoreCase)
+        .Order(StringComparer.OrdinalIgnoreCase)
+        .ToArray();
+
+    Console.WriteLine();
+    Console.WriteLine("TAILORED MODE EXCLUSIONS");
+    Console.WriteLine("========================");
+    Console.WriteLine($"Excluded armor sets: {string.Join(", ", TailoredLoadoutRules.ExcludedArmorSets)}");
+    Console.WriteLine($"Excluded weapons: {string.Join(", ", excludedWeapons)}");
+}
 
 // Locates the solution root from either the current directory or executable path.
 static string FindSolutionRoot()

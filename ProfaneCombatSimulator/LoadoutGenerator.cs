@@ -33,10 +33,14 @@ public sealed class LoadoutGenerator
         attackProfiles = gameData.AttackProfiles;
         this.mode = mode;
         random = new Random(seed);
-        itemsBySlot = gameData.Items
+        Item[] eligibleItems = mode == LoadoutGenerationMode.Tailored
+            ? gameData.Items.Where(TailoredLoadoutRules.IsEligible).ToArray()
+            : gameData.Items.ToArray();
+
+        itemsBySlot = eligibleItems
             .GroupBy(item => item.Slot)
             .ToDictionary(group => group.Key, group => group.ToArray());
-        weapons = gameData.Items
+        weapons = eligibleItems
             .Where(item =>
                 (item.Slot is EquipmentSlot.OneHandedWeapon or EquipmentSlot.TwoHandedWeapon) &&
                 !item.IsBow)
@@ -63,7 +67,7 @@ public sealed class LoadoutGenerator
                 throw new InvalidDataException($"No items were imported for required slot '{slot}'.");
         }
         if (weapons.Length == 0)
-            throw new InvalidDataException("No main-hand weapons were imported.");
+            throw new InvalidDataException("No eligible main-hand weapons are available for the selected loadout mode.");
     }
 
     // Produces one fully equipped legal loadout and resolves its weapon profile.
