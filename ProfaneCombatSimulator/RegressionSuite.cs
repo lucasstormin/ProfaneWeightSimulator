@@ -24,6 +24,8 @@ public static class RegressionSuite
         RunCheck("Time limit produces a stalemate", TestStalemate);
         RunCheck("Health regeneration ticks after damage and cannot revive", TestHealthRegeneration);
         RunCheck("Life Steal resolves after simultaneous overkill damage", TestLifeSteal);
+        RunCheck("Skill ignore checkbox accepts numeric sheet values", TestSkillIgnoreCheckbox);
+        RunCheck("Critical Damage reports unavailable without enough Critical Chance", TestCriticalDamageWithoutEligibleSamples);
         RunCheck("Skill output uses Magic Power as its base", TestSkillOutputAnalysis);
         RunCheck("Profile-aware weights use one-percent Attack Speed units", TestContextualWeights);
         RunCheck("Seeded time-based analysis is deterministic", TestDeterministicAnalysis);
@@ -360,6 +362,45 @@ public static class RegressionSuite
         AssertClose(33, truncationState.TotalHealing);
     }
 
+    // Confirms Google Sheets numeric checkboxes are treated as ignored skills.
+    private static void TestSkillIgnoreCheckbox()
+    {
+        System.Reflection.MethodInfo method = typeof(GameSheetParser).GetMethod(
+            "IsIgnoredSkill",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)
+            ?? throw new Exception("Could not find skill ignore parser.");
+        if (!Equals(method.Invoke(null, ["1"]), true))
+            throw new Exception("Numeric checked skill checkbox was not ignored.");
+        if (!Equals(method.Invoke(null, ["TRUE"]), true))
+            throw new Exception("Boolean checked skill checkbox was not ignored.");
+        if (!Equals(method.Invoke(null, ["0"]), false))
+            throw new Exception("Unchecked skill checkbox was ignored.");
+    }
+
+    // Confirms Critical Damage does not stop the run when no sampled build has enough Critical Chance.
+    private static void TestCriticalDamageWithoutEligibleSamples()
+    {
+        GameData source = CreateTestGameData();
+        CharacterStatsBuilder startingStats = new(source.StartingStats);
+        startingStats.Set(AttributeId.CriticalChance, 0);
+        GameData noCriticalChance = new()
+        {
+            StartingStats = startingStats.Build(),
+            CombatConfig = source.CombatConfig,
+            Items = source.Items
+                .Select(RemoveCriticalChance)
+                .ToArray(),
+            AttackProfiles = source.AttackProfiles,
+            Skills = source.Skills
+        };
+
+        SimulationAnalysisResult result = TimeBasedAnalysisRunner.Analyze(noCriticalChance, 20, 13);
+        if (result.CriticalDamage.IsAvailable)
+            throw new Exception("Critical Damage was available without eligible Critical Chance samples.");
+        if (result.CriticalDamageValidationComparisons != 0)
+            throw new Exception("Critical Damage retained comparisons without eligible samples.");
+    }
+
     // Confirms caster output weights are reproducible and Magic Power increases skill damage.
     private static void TestSkillOutputAnalysis()
     {
@@ -381,6 +422,8 @@ public static class RegressionSuite
             throw new Exception("Caster analysis produced no skill output.");
         if (first.CooldownReduction.MedianWeight <= 0)
             throw new Exception("Caster analysis did not value Cooldown Reduction.");
+        if (first.ManaLimitedSamples < 0)
+            throw new Exception("Caster mana diagnostics produced invalid sample counts.");
         AssertClose(first.CooldownReduction.MedianWeight, second.CooldownReduction.MedianWeight);
         AssertClose(first.MagicResist.MedianWeight, second.MagicResist.MedianWeight);
         AssertClose(first.MaxMana.MedianWeight, second.MaxMana.MedianWeight);
@@ -588,6 +631,26 @@ public static class RegressionSuite
         };
         GameDataValidator.Validate(gameData);
         return gameData;
+    }
+
+    // Copies one item while removing Critical Chance for eligibility edge-case tests.
+    private static Item RemoveCriticalChance(Item source)
+    {
+        Item item = new()
+        {
+            Name = source.Name,
+            Slot = source.Slot,
+            AttackProfileName = source.AttackProfileName,
+            ArmorSetName = source.ArmorSetName,
+            ExcludeFromSimulation = source.ExcludeFromSimulation
+        };
+        foreach ((AttributeId attribute, double value) in source.Attributes)
+        {
+            if (attribute != AttributeId.CriticalChance)
+                item.AddAttribute(attribute, value);
+        }
+
+        return item;
     }
 
     // Creates the deterministic three-hit profile shared by regression fixtures.

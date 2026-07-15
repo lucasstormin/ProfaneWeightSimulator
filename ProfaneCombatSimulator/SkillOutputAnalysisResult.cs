@@ -8,6 +8,7 @@ public sealed class SkillOutputAnalysisResult
     public required int SkillSlots { get; init; }
     public required int EligibleSkills { get; init; }
     public required int CooldownReductionEligibleSamples { get; init; }
+    public required int ManaLimitedSamples { get; init; }
     public required double AverageBaseOutput { get; init; }
     public required CasterAttributeWeightDistributionResult CooldownReduction { get; init; }
     public required CasterAttributeWeightDistributionResult MagicResist { get; init; }

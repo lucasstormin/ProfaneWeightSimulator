@@ -168,6 +168,9 @@ static void PrintSkillOutputReport(SkillOutputAnalysisResult result)
     Console.WriteLine(
         $"Cooldown Reduction eligible samples: {result.CooldownReductionEligibleSamples:N0} " +
         $"of {result.Simulations:N0} (>10% existing CDR)");
+    double manaPressure = Percent(result.ManaLimitedSamples, result.Simulations);
+    Console.WriteLine($"Mana pressure: {DescribeManaPressure(manaPressure)} ({manaPressure:F1}% of builds were mana-limited)");
+    Console.WriteLine($"Mana stat reliability: {DescribeManaReliability(manaPressure)}");
     Console.WriteLine($"Average smooth output: {result.AverageBaseOutput:F2} damage over {result.CombatWindowSeconds:F2}s");
     Console.WriteLine();
     Console.WriteLine($"{"Attribute",-30} {"Recommended Weight",20} {"Typical Range",22} {"Variation",18}");
@@ -194,6 +197,8 @@ static void PrintSkillOutputReport(SkillOutputAnalysisResult result)
     Console.WriteLine("Weights are relative to Magic Power, not Attack Power.");
     Console.WriteLine("Caster recommendations use priority-based smooth output estimates to avoid one-extra-cast breakpoints.");
     Console.WriteLine("Magic Power and CDR are valued as throughput; mana stats are valued by extra resource-limited output.");
+    Console.WriteLine("Mana pressure shows how often caster builds wanted more mana during the combat window.");
+    Console.WriteLine("Mana stat reliability explains whether mana weights are based on enough mana-limited builds.");
     Console.WriteLine("Median is used as the recommended caster balance-sheet weight.");
     Console.WriteLine("Typical Range is the middle 90% of sampled caster loadouts.");
     Console.WriteLine("Variation shows how context-dependent that caster stat is.");
@@ -224,6 +229,12 @@ static void PrintCasterDetails(CasterAttributeWeightDistributionResult distribut
 // Prints one contextual attribute in the scalable summary table.
 static void PrintSummaryRow(AttributeWeightDistributionResult distribution)
 {
+    if (!distribution.IsAvailable)
+    {
+        Console.WriteLine($"{distribution.DisplayName,-27} {"N/A",20} {"N/A",22} {"No samples",18}");
+        return;
+    }
+
     string range = $"{distribution.FifthPercentile:F4}–{distribution.NinetyFifthPercentile:F4}";
     double variationPercent = distribution.StandardDeviation / distribution.MeanWeight * 100;
     string variation = $"{ClassifyVariation(variationPercent)} ({variationPercent:F1}%)";
@@ -233,6 +244,12 @@ static void PrintSummaryRow(AttributeWeightDistributionResult distribution)
 // Prints compact distribution diagnostics for one contextual attribute.
 static void PrintDetails(AttributeWeightDistributionResult distribution)
 {
+    if (!distribution.IsAvailable)
+    {
+        Console.WriteLine($"{distribution.DisplayName}: {distribution.UnavailableReason}");
+        return;
+    }
+
     Console.WriteLine(
         $"{distribution.DisplayName}: mean {distribution.MeanWeight:F4} | " +
         $"median {distribution.MedianWeight:F4} | SD {distribution.StandardDeviation:F4} | " +
@@ -347,6 +364,29 @@ static string ClassifyVariation(double coefficientOfVariationPercent)
     if (coefficientOfVariationPercent < 25)
         return "Moderate";
     return "High";
+}
+
+// Converts a count into a percentage while keeping empty runs defensive.
+static double Percent(int count, int total) => total == 0 ? 0 : (double)count / total * 100;
+
+// Summarizes whether the caster sample is usually constrained by mana.
+static string DescribeManaPressure(double manaPressurePercent)
+{
+    if (manaPressurePercent >= 70)
+        return "High";
+    if (manaPressurePercent >= 30)
+        return "Moderate";
+    return "Low";
+}
+
+// Explains how much trust to place in mana-stat recommendations for this run.
+static string DescribeManaReliability(double manaPressurePercent)
+{
+    if (manaPressurePercent >= 70)
+        return "Good — mana stats affected most sampled caster builds.";
+    if (manaPressurePercent >= 30)
+        return "Mixed — mana stats matter in some builds, but recommendations are context-heavy.";
+    return "Weak — most sampled builds were not mana-limited, so mana weights may be near zero or unstable.";
 }
 
 // Reads a positive simulation count from an editable prefilled console field.

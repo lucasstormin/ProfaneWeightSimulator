@@ -333,12 +333,6 @@ public static class TimeBasedAnalysisRunner
             }
         }
 
-        if (criticalDamageWeights.Count == 0)
-        {
-            throw new InvalidOperationException(
-                "No sampled builds met the 10% Critical Chance requirement for Critical Damage weighting.");
-        }
-
         return new SimulationAnalysisResult
         {
             SimulatedFights = fights,
@@ -416,8 +410,9 @@ public static class TimeBasedAnalysisRunner
                 "Critical Damage (1%)*",
                 "1 percentage point",
                 criticalDamageWeights.ToArray(),
-                minimums[6]!,
-                maximums[6]!),
+                minimums[6],
+                maximums[6],
+                $"Not enough eligible samples. Critical Damage requires at least {CriticalDamageMinimumChance:P0} Critical Chance."),
             HealthRegen = CreateDistribution(
                 AttributeId.HealthRegen,
                 "Health Regen (1 HP/s)",
@@ -644,9 +639,32 @@ public static class TimeBasedAnalysisRunner
         string displayName,
         string unitLabel,
         double[] weights,
-        WeightedLoadout minimum,
-        WeightedLoadout maximum)
+        WeightedLoadout? minimum,
+        WeightedLoadout? maximum,
+        string? unavailableReason = null)
     {
+        if (weights.Length == 0)
+        {
+            return new AttributeWeightDistributionResult
+            {
+                IsAvailable = false,
+                Attribute = attribute,
+                DisplayName = displayName,
+                UnitLabel = unitLabel,
+                UnavailableReason = unavailableReason ?? "Not enough eligible samples.",
+                RecommendedWeight = 0,
+                MeanWeight = 0,
+                MedianWeight = 0,
+                StandardDeviation = 0,
+                MinimumWeight = 0,
+                FifthPercentile = 0,
+                NinetyFifthPercentile = 0,
+                MaximumWeight = 0,
+                MinimumLoadout = null,
+                MaximumLoadout = null
+            };
+        }
+
         Array.Sort(weights);
         double mean = weights.Average();
         double variance = weights.Sum(weight => Math.Pow(weight - mean, 2)) / weights.Length;

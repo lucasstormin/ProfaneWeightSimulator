@@ -50,6 +50,7 @@ public static class SkillOutputAnalysisRunner
         WeightedSkillLoadout?[] minimums = new WeightedSkillLoadout?[4];
         WeightedSkillLoadout?[] maximums = new WeightedSkillLoadout?[4];
         double totalBaseOutput = 0;
+        int manaLimitedSamples = 0;
 
         for (int index = 0; index < simulations; index++)
         {
@@ -67,7 +68,16 @@ public static class SkillOutputAnalysisRunner
                 gameData.CombatConfig,
                 combatWindowSeconds,
                 target.Stats[AttributeId.MagicResist]);
+            double unlimitedManaOutput = SkillOutputSimulator.EstimateSmoothOutput(
+                skillLoadout.Stats,
+                skillLoadout.Skills,
+                gameData.CombatConfig,
+                combatWindowSeconds,
+                target.Stats[AttributeId.MagicResist],
+                enforceMana: false);
             totalBaseOutput += baseOutput;
+            if (unlimitedManaOutput > baseOutput)
+                manaLimitedSamples++;
 
             double magicPowerGain = CalculateOutputGain(
                 skillLoadout,
@@ -166,6 +176,7 @@ public static class SkillOutputAnalysisRunner
             SkillSlots = gameData.CombatConfig.SkillSlots,
             EligibleSkills = eligibleSkills.Length,
             CooldownReductionEligibleSamples = cooldownReductionWeights.Count,
+            ManaLimitedSamples = manaLimitedSamples,
             AverageBaseOutput = totalBaseOutput / simulations,
             CooldownReduction = CreateDistribution(
                 AttributeId.CooldownReduction,

@@ -346,7 +346,7 @@ public static partial class GameSheetParser
 
     // Reads the spreadsheet's checkbox export for skills excluded from simulation.
     private static bool IsIgnoredSkill(string? value) =>
-        bool.TryParse(value, out bool ignored) && ignored;
+        IsTrue(value);
 
     // Reads spreadsheet checkbox exports that mark entries unavailable for simulation sampling.
     private static bool IsTrue(string? value)
